@@ -123,6 +123,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                   <b>Mode démo (sans clé)</b> — les personnages répondent avec des
                   messages préenregistrés. Pratique pour découvrir l'interface ou faire
                   une démonstration en classe sans consommer de crédit.
+                  {settings.demoMode && (
+                    <span className="mt-1 block font-bold text-violet-700 dark:text-violet-300">
+                      ⚠️ Tant que cette case est cochée, elle remplace les vraies
+                      réponses IA — décoche-la pour parler aux personnages.
+                    </span>
+                  )}
                 </span>
               </label>
             </section>
