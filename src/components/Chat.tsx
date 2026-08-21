@@ -15,6 +15,7 @@ import { friendlyError, streamAgentReply, suggestReplies } from "../lib/api";
 import { useApp } from "../lib/context";
 import { parseAssistantContent } from "../lib/markers";
 import { createRecognizer, sttSupported, stopSpeaking, type Recognizer } from "../lib/speech";
+import { supabaseEnabled } from "../lib/supabase";
 import {
   clearConversation,
   loadConversation,
@@ -149,7 +150,8 @@ export function Chat({ agentId }: { agentId: string }) {
   const send = useCallback(() => {
     const text = input.trim();
     if (!text || streamingId) return;
-    if (!settings.apiKey && !settings.demoMode) {
+    // En mode classe (Supabase), la clé est côté serveur : rien à exiger ici
+    if (!supabaseEnabled && !settings.apiKey && !settings.demoMode) {
       openSettings();
       return;
     }
