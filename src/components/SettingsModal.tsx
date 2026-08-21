@@ -57,11 +57,22 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                 <KeyRound className="h-4 w-4" /> Accès à l'IA (côté professeur)
               </h3>
               {supabaseEnabled ? (
-                <p className="mt-2 rounded-xl bg-emerald-50 px-3 py-2.5 text-xs leading-relaxed text-emerald-800 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-200 dark:ring-emerald-900">
-                  🔒 <b>Mode classe actif</b> : la clé API est gérée par le serveur de
-                  la classe. Rien à saisir sur ce poste — il suffit d'être connecté à
-                  son compte.
-                </p>
+                <div className="mt-2 space-y-2">
+                  <ModeCard
+                    selected={!settings.demoMode}
+                    onClick={() => updateSettings({ demoMode: false })}
+                    emoji="🎓"
+                    title="Mode classe — vraie IA"
+                    desc="Les personnages répondent grâce à l'IA, via le serveur sécurisé de la classe. Rien à saisir : la clé est gérée côté serveur."
+                  />
+                  <ModeCard
+                    selected={settings.demoMode}
+                    onClick={() => updateSettings({ demoMode: true })}
+                    emoji="🎭"
+                    title="Mode démo — sans IA"
+                    desc="Réponses préenregistrées, gratuites : pour découvrir l'interface ou projeter une démonstration."
+                  />
+                </div>
               ) : (
                 <>
                   <label className="mt-2 block text-xs font-bold text-slate-500 dark:text-slate-400">
@@ -112,25 +123,27 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                 </p>
               )}
 
-              <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl bg-violet-50 p-3 dark:bg-violet-950/40">
-                <input
-                  type="checkbox"
-                  checked={settings.demoMode}
-                  onChange={(e) => updateSettings({ demoMode: e.target.checked })}
-                  className="mt-0.5 h-4 w-4 accent-violet-600"
-                />
-                <span className="text-xs leading-relaxed">
-                  <b>Mode démo (sans clé)</b> — les personnages répondent avec des
-                  messages préenregistrés. Pratique pour découvrir l'interface ou faire
-                  une démonstration en classe sans consommer de crédit.
-                  {settings.demoMode && (
-                    <span className="mt-1 block font-bold text-violet-700 dark:text-violet-300">
-                      ⚠️ Tant que cette case est cochée, elle remplace les vraies
-                      réponses IA — décoche-la pour parler aux personnages.
-                    </span>
-                  )}
-                </span>
-              </label>
+              {!supabaseEnabled && (
+                <label className="mt-3 flex cursor-pointer items-start gap-2.5 rounded-xl bg-violet-50 p-3 dark:bg-violet-950/40">
+                  <input
+                    type="checkbox"
+                    checked={settings.demoMode}
+                    onChange={(e) => updateSettings({ demoMode: e.target.checked })}
+                    className="mt-0.5 h-4 w-4 accent-violet-600"
+                  />
+                  <span className="text-xs leading-relaxed">
+                    <b>Mode démo (sans clé)</b> — les personnages répondent avec des
+                    messages préenregistrés. Pratique pour découvrir l'interface ou
+                    faire une démonstration en classe sans consommer de crédit.
+                    {settings.demoMode && (
+                      <span className="mt-1 block font-bold text-violet-700 dark:text-violet-300">
+                        ⚠️ Tant que cette case est cochée, elle remplace les vraies
+                        réponses IA — décoche-la pour parler aux personnages.
+                      </span>
+                    )}
+                  </span>
+                </label>
+              )}
             </section>
 
             {/* Élève (mode local uniquement : en mode classe, le prénom vient du compte) */}
@@ -185,5 +198,49 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
         </motion.div>
       )}
     </AnimatePresence>
+  );
+}
+
+function ModeCard({
+  selected,
+  onClick,
+  emoji,
+  title,
+  desc,
+}: {
+  selected: boolean;
+  onClick: () => void;
+  emoji: string;
+  title: string;
+  desc: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex w-full items-start gap-2.5 rounded-xl p-3 text-left transition-all ${
+        selected
+          ? "bg-emerald-50 ring-2 ring-emerald-500 dark:bg-emerald-950/40"
+          : "bg-white ring-1 ring-orange-200 hover:bg-orange-50 dark:bg-slate-950 dark:ring-slate-700 dark:hover:bg-slate-800"
+      }`}
+    >
+      <span
+        className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border-2 ${
+          selected ? "border-emerald-500" : "border-slate-300 dark:border-slate-600"
+        }`}
+      >
+        {selected && <span className="h-2 w-2 rounded-full bg-emerald-500" />}
+      </span>
+      <span className="text-xs leading-relaxed">
+        <b>
+          {emoji} {title}
+        </b>
+        {selected && (
+          <span className="ml-1.5 rounded-full bg-emerald-500 px-1.5 py-0.5 text-[10px] font-extrabold text-white">
+            ACTIF
+          </span>
+        )}
+        <span className="mt-0.5 block text-slate-500 dark:text-slate-400">{desc}</span>
+      </span>
+    </button>
   );
 }
