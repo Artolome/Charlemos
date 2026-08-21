@@ -10,5 +10,6 @@
 // publiques par conception : la sécurité repose sur les règles RLS
 // et la clé API Anthropic reste secrète, côté serveur.
 
-export const SUPABASE_URL = ""; // ex. "https://abcdefghijkl.supabase.co"
-export const SUPABASE_ANON_KEY = ""; // clé « anon public »
+export const SUPABASE_URL = "https://dsvtpqouivpjwcuvvozf.supabase.co";
+export const SUPABASE_ANON_KEY =
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRzdnRwcW91aXZwandjdXZ2b3pmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODczMTYxMDYsImV4cCI6MjEwMjg5MjEwNn0.T2oMVBzjvAgIiP7e3UydN07qTYhS5hW7YY0mQo8H5FI";
