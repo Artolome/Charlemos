@@ -1,6 +1,6 @@
 # Déploiement automatique sur GitHub Pages à chaque push sur main.
 # Prérequis (une seule fois) : GitHub → Settings → Pages → Source : « GitHub Actions ».
-# NB : si le dépôt ne s'appelle pas « charlemos », adapter --base ci-dessous.
+# Le chemin de base est déduit automatiquement du nom du dépôt (ex. /Charlemos/).
 
 name: Déployer sur GitHub Pages
 
@@ -28,7 +28,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npx vite build --base=/charlemos/
+      - run: npx vite build --base=/${{ github.event.repository.name }}/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
