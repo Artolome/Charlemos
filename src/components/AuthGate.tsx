@@ -1,12 +1,17 @@
 // Porte d'entrée du mode « classe » : connexion / création de compte.
 // Si Supabase n'est pas configuré (src/config.ts vide), rend directement
 // l'application en mode local, comme avant.
+//
+// - Élève : prénom + code de classe + mot de passe. Le compte est créé par
+//   le serveur (fonction Edge), déjà confirmé — pas d'e-mail nécessaire.
+// - Professeur : e-mail + mot de passe, avec confirmation par e-mail.
 
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { motion } from "framer-motion";
 import { GraduationCap, KeyRound, Loader2, School, UserRound } from "lucide-react";
 import App from "../App";
 import {
+  callPublicFunction,
   getSupabase,
   SessionContext,
   slugName,
@@ -26,12 +31,28 @@ export function AuthGate() {
   const enterSession = useCallback(async (userId: string): Promise<boolean> => {
     const sb = getSupabase();
     if (!sb) return false;
-    const { data } = await sb
+    let { data } = await sb
       .from("profiles")
       .select("id, display_name, role, class_id")
       .eq("id", userId)
       .maybeSingle();
+
+    // Professeur qui vient de confirmer son e-mail : le profil n'a pas pu
+    // être créé à l'inscription (pas de session avant confirmation).
+    if (!data) {
+      const { data: u } = await sb.auth.getUser();
+      const meta = (u.user?.user_metadata ?? {}) as { display_name?: string; role?: string };
+      if (meta.role === "teacher") {
+        const display_name =
+          meta.display_name?.trim() || u.user?.email?.split("@")[0] || "Professeur";
+        const { error } = await sb
+          .from("profiles")
+          .insert({ id: userId, display_name, role: "teacher", class_id: null });
+        if (!error) data = { id: userId, display_name, role: "teacher", class_id: null };
+      }
+    }
     if (!data) return false;
+
     setStorageNamespace(userId);
     try {
       await pullAll(sb, userId);
@@ -110,6 +131,7 @@ function AuthScreens({
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
   const fail = (msg: string) => {
     setError(msg);
@@ -119,6 +141,7 @@ function AuthScreens({
   const submit = async () => {
     if (busy) return;
     setError("");
+    setInfo("");
     const sb = getSupabase();
     if (!sb) return;
     if (password.length < 6) {
@@ -128,6 +151,7 @@ function AuthScreens({
     setBusy(true);
 
     try {
+      // ----- Élève -----
       if (tab === "student") {
         if (!prenom.trim() || slugName(prenom).length < 2) {
           fail("Écris ton prénom (lettres uniquement).");
@@ -137,55 +161,27 @@ function AuthScreens({
           fail("Il faut le code de classe donné par ton professeur.");
           return;
         }
-        const mail = studentEmail(prenom, code);
-
         if (mode === "signup") {
-          const { data: cls, error: clsErr } = await sb
-            .rpc("class_by_code", { code: code.trim() })
-            .maybeSingle();
-          if (clsErr || !cls) {
-            fail("Code de classe inconnu. Vérifie-le avec ton professeur.");
-            return;
-          }
-          const { data, error: err } = await sb.auth.signUp({
-            email: mail,
+          const r = await callPublicFunction({
+            op: "signup_student",
+            prenom: prenom.trim(),
+            code: code.trim(),
             password,
           });
-          if (err) {
-            fail(
-              /already/i.test(err.message)
-                ? "Ce prénom est déjà pris dans cette classe : ajoute l'initiale de ton nom (ex. « Léa B »)."
-                : `Création impossible : ${err.message}`,
-            );
+          if (!r.ok) {
+            fail(r.error ?? "Inscription impossible, réessaie.");
             return;
           }
-          if (!data.session || !data.user) {
-            fail(
-              "Le serveur demande une confirmation d'e-mail. Le professeur doit désactiver « Confirm email » dans Supabase (Authentication → Providers → Email).",
-            );
-            return;
-          }
-          const { error: profErr } = await sb.from("profiles").insert({
-            id: data.user.id,
-            display_name: prenom.trim(),
-            role: "student",
-            class_id: (cls as { id: string }).id,
-          });
-          if (profErr) {
-            fail(`Profil non créé : ${profErr.message}`);
-            return;
-          }
-          await onSignedIn(data.user.id);
-          return;
         }
-
         const { data, error: err } = await sb.auth.signInWithPassword({
-          email: mail,
+          email: studentEmail(prenom, code),
           password,
         });
         if (err || !data.user) {
           fail(
-            "Connexion refusée : vérifie ton prénom (écrit exactement pareil), le code de classe et ton mot de passe — ou crée ton compte.",
+            mode === "signup"
+              ? "Compte créé, mais la connexion a échoué : réessaie avec « Se connecter »."
+              : "Connexion refusée : vérifie ton prénom (écrit exactement pareil), le code de classe et ton mot de passe — ou crée ton compte.",
           );
           return;
         }
@@ -194,7 +190,7 @@ function AuthScreens({
         return;
       }
 
-      // Professeur
+      // ----- Professeur -----
       if (!email.trim()) {
         fail("Indique ton adresse e-mail.");
         return;
@@ -203,25 +199,26 @@ function AuthScreens({
         const { data, error: err } = await sb.auth.signUp({
           email: email.trim(),
           password,
+          options: {
+            data: { display_name: email.trim().split("@")[0], role: "teacher" },
+          },
         });
         if (err) {
-          fail(`Création impossible : ${err.message}`);
-          return;
-        }
-        if (!data.session || !data.user) {
           fail(
-            "Confirme ton adresse via l'e-mail reçu, ou désactive « Confirm email » dans Supabase (Authentication → Providers → Email), puis reconnecte-toi.",
+            /already|registered/i.test(err.message)
+              ? "Un compte existe déjà avec cette adresse : connecte-toi."
+              : `Création impossible : ${err.message}`,
           );
           return;
         }
-        const { error: profErr } = await sb.from("profiles").insert({
-          id: data.user.id,
-          display_name: email.split("@")[0],
-          role: "teacher",
-          class_id: null,
-        });
-        if (profErr) {
-          fail(`Profil non créé : ${profErr.message}`);
+        if (!data.session || !data.user) {
+          // Confirmation par e-mail activée (recommandé) : le profil sera
+          // créé automatiquement à la première connexion.
+          setBusy(false);
+          setMode("login");
+          setInfo(
+            `📧 Un e-mail de confirmation vient d'être envoyé à ${email.trim()} (regarde aussi les spams). Clique sur le lien qu'il contient, puis reviens ici pour te connecter.`,
+          );
           return;
         }
         await onSignedIn(data.user.id);
@@ -232,7 +229,11 @@ function AuthScreens({
         password,
       });
       if (err || !data.user) {
-        fail("Connexion refusée : e-mail ou mot de passe incorrect.");
+        fail(
+          /not confirmed/i.test(err?.message ?? "")
+            ? "📧 Confirme d'abord ton adresse : clique sur le lien reçu par e-mail, puis réessaie."
+            : "Connexion refusée : e-mail ou mot de passe incorrect.",
+        );
         return;
       }
       const ok = await onSignedIn(data.user.id);
@@ -268,6 +269,7 @@ function AuthScreens({
             onClick={() => {
               setTab("student");
               setError("");
+              setInfo("");
             }}
             icon={<UserRound className="h-4 w-4" />}
             label="Élève"
@@ -277,6 +279,7 @@ function AuthScreens({
             onClick={() => {
               setTab("teacher");
               setError("");
+              setInfo("");
             }}
             icon={<GraduationCap className="h-4 w-4" />}
             label="Professeur"
@@ -331,6 +334,11 @@ function AuthScreens({
             {error}
           </p>
         )}
+        {info && (
+          <p className="mt-3 rounded-xl bg-emerald-50 px-3 py-2 text-xs font-semibold leading-relaxed text-emerald-700 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:ring-emerald-900">
+            {info}
+          </p>
+        )}
 
         <button
           onClick={() => void submit()}
@@ -345,6 +353,7 @@ function AuthScreens({
           onClick={() => {
             setMode(mode === "login" ? "signup" : "login");
             setError("");
+            setInfo("");
           }}
           className="mt-2.5 w-full text-center text-xs font-bold text-slate-500 underline underline-offset-2 hover:text-slate-700 dark:text-slate-400"
         >
@@ -355,10 +364,14 @@ function AuthScreens({
             : "J'ai déjà un compte : me connecter"}
         </button>
 
-        {tab === "student" && (
+        {tab === "student" ? (
           <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
             Ton professeur te donne le code de classe. N'utilise que ton prénom —
             jamais ton nom complet.
+          </p>
+        ) : (
+          <p className="mt-4 text-center text-[11px] leading-relaxed text-slate-400 dark:text-slate-500">
+            Les comptes professeur sont confirmés par e-mail.
           </p>
         )}
       </motion.div>

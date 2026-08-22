@@ -23,11 +23,18 @@ Ce guide se fait une seule fois, en ~20 minutes. À la fin :
 2. Ouvre le fichier `supabase/setup.sql` de ce projet, copie **tout** son contenu,
    colle-le, puis clique **Run**. Tu dois voir « Success ».
 
-### 3. Autoriser les comptes sans confirmation d'e-mail
-Les élèves n'ont pas de vraie adresse e-mail (l'application fabrique un identifiant
-technique invisible) :
-1. Menu **Authentication** → **Sign In / Providers** → **Email**.
-2. Désactive **« Confirm email »** → *Save*.
+### 3. Réglages d'authentification
+Les élèves n'ont pas d'adresse e-mail : leurs comptes sont créés directement par le
+serveur (la fonction de l'étape 4), déjà confirmés, après vérification du code de
+classe. Les comptes **professeur**, eux, sont confirmés par e-mail — c'est ce qui
+empêche n'importe qui de se déclarer professeur.
+1. Menu **Authentication** → **Sign In / Providers** → **Email** : laisse
+   **« Confirm email » activé** (c'est le réglage par défaut).
+2. Menu **Authentication** → **URL Configuration** :
+   - **Site URL** : l'adresse publique de l'application, par exemple
+     `https://TONPSEUDO.github.io/Charlemos/` — c'est là qu'atterrit le lien de
+     confirmation reçu par e-mail ;
+   - **Redirect URLs** : ajoute aussi `http://localhost:5173` pour les tests locaux.
 
 ### 4. Déployer la fonction IA (le proxy qui garde ta clé)
 1. Menu **Edge Functions** → *Deploy a new function* → **Via Editor**.
@@ -39,6 +46,10 @@ technique invisible) :
 5. Clique **Deploy**.
 
 > Alternative pour les à-l'aise en ligne de commande : `npx supabase functions deploy charlemos-ia`.
+>
+> ⚠️ Quand l'application est mise à jour (nouvelle version de `index.ts` ou
+> `prompts.ts`), il faut recoller le nouveau contenu ici et cliquer à nouveau
+> **Deploy** — la fonction ne se met pas à jour toute seule.
 
 ### 5. Donner la clé API au serveur (et à lui seul)
 1. Sur **console.anthropic.com** : crée une clé API dédiée « charlemos-classe »
@@ -61,7 +72,9 @@ technique invisible) :
 
 ### 7. Premier lancement
 1. Lance l'application (`LANCER-CHARLEMOS.bat`) : un écran de connexion apparaît.
-2. Onglet **Professeur** → « Créer un compte professeur » (ton e-mail + mot de passe).
+2. Onglet **Professeur** → « Créer un compte professeur » (ton e-mail + mot de passe)
+   → un e-mail de confirmation arrive (regarde les spams) → clique sur le lien →
+   reviens te connecter.
 3. Menu **Ma classe** → crée ta classe : un **code à 6 caractères** est généré.
 4. Les élèves : onglet **Élève** → « Crée ton compte » → prénom + code + mot de passe.
    (Deux élèves avec le même prénom dans la classe : le second ajoute une initiale,

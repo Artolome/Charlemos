@@ -57,6 +57,32 @@ export function studentEmail(prenom: string, joinCode: string): string {
   return `${slugName(prenom)}.${joinCode.trim().toLowerCase()}@charlemos.local`;
 }
 
+/**
+ * Appel de la fonction Edge SANS session (inscription élève) : c'est le
+ * serveur qui vérifie le code de classe et crée le compte déjà confirmé.
+ */
+export async function callPublicFunction(
+  payload: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string }> {
+  let res: Response;
+  try {
+    res = await fetch(`${SUPABASE_URL}/functions/v1/charlemos-ia`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        apikey: SUPABASE_ANON_KEY,
+        authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    return { ok: false, error: "Le serveur ne répond pas. Vérifie la connexion Internet." };
+  }
+  const data = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  if (!res.ok) return { ok: false, error: data.error ?? `Erreur du serveur (${res.status}).` };
+  return { ok: true };
+}
+
 /** En-têtes d'appel de la fonction Edge (proxy IA), avec le jeton de session */
 export async function getFunctionAuth(): Promise<{
   url: string;
