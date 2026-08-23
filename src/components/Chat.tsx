@@ -41,13 +41,20 @@ export function Chat({ agentId }: { agentId: string }) {
   const agent = agentById(agentId);
   const { settings, awardMessageXp, completeMission, pushToast, openSettings } = useApp();
 
-  const [conv, setConv] = useState<Conversation>(
-    () =>
-      loadConversation(agentId) ?? {
-        messages: [starterMessage(agent.starter)],
-        level: agent.defaultLevel,
-      },
-  );
+  const [conv, setConv] = useState<Conversation>(() => {
+    const saved = loadConversation(agentId);
+    if (!saved) {
+      return { messages: [starterMessage(agent.starter)], level: agent.defaultLevel };
+    }
+    // Retire les bulles assistant vides laissées par un arrêt au mauvais moment
+    const messages = saved.messages.filter(
+      (m) => m.role === "user" || m.error || m.content.trim().length > 0,
+    );
+    return {
+      ...saved,
+      messages: messages.length > 0 ? messages : [starterMessage(agent.starter)],
+    };
+  });
   const [input, setInput] = useState("");
   const [streamingId, setStreamingId] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[] | null>(null);
@@ -124,11 +131,18 @@ export function Chat({ agentId }: { agentId: string }) {
           },
         });
         if (!full.trim()) {
-          // Rien reçu (arrêt immédiat) : on retire la bulle vide
+          // Rien reçu (arrêt immédiat) : on retire la bulle vide ET on rend
+          // son message à l'élève, pour que rien ne soit consommé en silence
+          // (sinon le rejeu du mode démo avancerait sur une question jamais vue).
+          const lastUser = history[history.length - 1];
+          const restoreUser = lastUser?.role === "user";
           setConv((c) => ({
             ...c,
-            messages: c.messages.filter((m) => m.id !== asstId),
+            messages: c.messages.filter(
+              (m) => m.id !== asstId && !(restoreUser && m.id === lastUser.id),
+            ),
           }));
+          if (restoreUser) setInput(lastUser.content);
         } else {
           updateMessage(asstId, { content: full });
           const parsed = parseAssistantContent(full);
