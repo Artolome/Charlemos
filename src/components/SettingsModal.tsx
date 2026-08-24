@@ -4,21 +4,37 @@ import { Eye, EyeOff, KeyRound, Trash2, User, X } from "lucide-react";
 import { MODELS } from "../lib/api";
 import { useApp } from "../lib/context";
 import { resetAllData } from "../lib/storage";
-import { supabaseEnabled } from "../lib/supabase";
+import { getSupabase, supabaseEnabled, useSession } from "../lib/supabase";
 
 export function SettingsModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { settings, updateSettings } = useApp();
+  const { profile } = useSession();
   const [showKey, setShowKey] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
-  const resetEverything = () => {
-    if (
-      window.confirm(
-        "Tout effacer ? Conversations, carnet de mots, XP, badges et réglages seront supprimés de cet appareil.",
-      )
-    ) {
-      resetAllData();
-      window.location.reload();
+  const resetEverything = async () => {
+    const message =
+      supabaseEnabled && profile
+        ? `Tout effacer pour le compte de ${profile.display_name} ? Conversations, carnet, XP, badges et rapports de mission seront supprimés, y compris sur le serveur de la classe. (Les autres comptes ne sont pas touchés.)`
+        : "Tout effacer ? Conversations, carnet de mots, XP, badges et réglages seront supprimés de cet appareil.";
+    if (!window.confirm(message)) return;
+    setResetting(true);
+    // En mode classe, les données vivent sur le serveur : les effacer aussi,
+    // sinon la synchronisation les restaure à la prochaine connexion.
+    const sb = getSupabase();
+    if (sb && profile) {
+      try {
+        await Promise.all([
+          sb.from("conversations").delete().eq("user_id", profile.id),
+          sb.from("mission_reports").delete().eq("user_id", profile.id),
+          sb.from("progress").delete().eq("user_id", profile.id),
+        ]);
+      } catch {
+        // hors connexion : on efface au moins la copie locale
+      }
     }
+    resetAllData();
+    window.location.reload();
   };
 
   const selectedModel = MODELS.find((m) => m.id === settings.model);
@@ -181,10 +197,12 @@ export function SettingsModal({ open, onClose }: { open: boolean; onClose: () =>
                 l'API Anthropic pour générer les réponses des personnages.
               </p>
               <button
-                onClick={resetEverything}
-                className="mt-2.5 flex items-center gap-1.5 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900"
+                onClick={() => void resetEverything()}
+                disabled={resetting}
+                className="mt-2.5 flex items-center gap-1.5 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600 ring-1 ring-red-200 hover:bg-red-100 disabled:opacity-60 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900"
               >
-                <Trash2 className="h-3.5 w-3.5" /> Tout effacer et recommencer
+                <Trash2 className="h-3.5 w-3.5" />
+                {resetting ? "Effacement..." : "Tout effacer et recommencer"}
               </button>
             </section>
 
