@@ -10,10 +10,12 @@ import {
   Copy,
   Download,
   Loader2,
+  Printer,
   RefreshCw,
   School,
   Users,
 } from "lucide-react";
+import { classReportHtml, openPrintWindow, studentReportHtml } from "../lib/print";
 import { AGENTS, agentById } from "../lib/agents";
 import { useApp } from "../lib/context";
 import { parseAssistantContent } from "../lib/markers";
@@ -238,6 +240,7 @@ export function TeacherView() {
     return (
       <StudentDetail
         student={selected}
+        className={klass.name}
         progress={progressRows.get(selected.id)}
         reports={reports.filter((r) => r.user_id === selected.id)}
         onBack={() => setSelected(null)}
@@ -266,6 +269,26 @@ export function TeacherView() {
             className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-orange-200 hover:bg-orange-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
           >
             <Download className="h-3.5 w-3.5" /> Export CSV
+          </button>
+          <button
+            onClick={() =>
+              openPrintWindow(
+                `Bilan ${klass.name}`,
+                classReportHtml({
+                  className: klass.name,
+                  joinCode: klass.join_code,
+                  rows: students.map((s) => ({
+                    name: s.display_name,
+                    progress: progressRows.get(s.id),
+                    reportCount: reports.filter((r) => r.user_id === s.id).length,
+                  })),
+                }),
+              )
+            }
+            className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-orange-200 hover:bg-orange-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+            title="Version imprimable du tableau de classe (ou enregistrer en PDF)"
+          >
+            <Printer className="h-3.5 w-3.5" /> Imprimer
           </button>
         </div>
 
@@ -345,11 +368,13 @@ export function TeacherView() {
 
 function StudentDetail({
   student,
+  className,
   progress,
   reports,
   onBack,
 }: {
   student: StudentRow;
+  className: string;
   progress?: ProgressRow;
   reports: ReportRow[];
   onBack: () => void;
@@ -375,12 +400,34 @@ function StudentDetail({
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-4xl px-4 pb-16 pt-6">
-        <button
-          onClick={onBack}
-          className="flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-bold text-slate-600 hover:bg-orange-100 dark:text-slate-300 dark:hover:bg-slate-800"
-        >
-          <ArrowLeft className="h-4 w-4" /> Retour à la classe
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={onBack}
+            className="flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-bold text-slate-600 hover:bg-orange-100 dark:text-slate-300 dark:hover:bg-slate-800"
+          >
+            <ArrowLeft className="h-4 w-4" /> Retour à la classe
+          </button>
+          <div className="flex-1" />
+          <button
+            onClick={() =>
+              openPrintWindow(
+                `Fiche ${student.display_name}`,
+                studentReportHtml({
+                  studentName: student.display_name,
+                  className,
+                  progress,
+                  reports,
+                  convs: convs ?? [],
+                }),
+              )
+            }
+            disabled={convs === null}
+            className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-orange-200 hover:bg-orange-50 disabled:opacity-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+            title="Fiche bilan imprimable : synthèse, missions, carnet et transcriptions (ou enregistrer en PDF)"
+          >
+            <Printer className="h-3.5 w-3.5" /> Imprimer la fiche
+          </button>
+        </div>
 
         <h1 className="mt-2 font-display text-3xl font-extrabold">{student.display_name}</h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">

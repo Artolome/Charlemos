@@ -315,5 +315,67 @@ function play(agentId: string, userMsgs: string[]): string[] {
   check("intrus : liste collée → choisir", r[6].includes("elige una sola"), r[6]);
 }
 
+// ---- 22) Documents imprimables ----
+{
+  const { studentReportHtml, classReportHtml } = await import("./src/lib/print");
+  const html = studentReportHtml({
+    studentName: 'Léa <script>alert("x")</script>',
+    className: "5e B — Espagnol",
+    progress: {
+      xp: 210,
+      msg_count: 9,
+      missions_completed: 1,
+      best_mission: 10,
+      vocab: [{ es: "la mochila", fr: "le sac à dos" }],
+      updated_at: "2026-08-21T10:00:00Z",
+    },
+    reports: [
+      {
+        total: 10,
+        comprension: 4,
+        expresion: 3,
+        lexico: 3,
+        insignia: "Agente Estrella",
+        consejo: "Revoir tener",
+        created_at: "2026-08-21T10:00:00Z",
+      },
+    ],
+    convs: [
+      {
+        agent_id: "mateo",
+        level: "A1",
+        messages: [
+          { id: "1", role: "assistant", content: "¡Hola! ¿Cómo te llamas?", ts: 0 },
+          { id: "2", role: "user", content: "Soy 12 años <b>gras</b>", ts: 0 },
+          {
+            id: "3",
+            role: "assistant",
+            content: "¡Tienes 12 años!\n[[astuce: On dit « tengo », pas « soy ».]]",
+            ts: 0,
+          },
+        ],
+      },
+    ],
+    printedAt: new Date("2026-08-21"),
+  });
+  check("print élève : sections présentes", ["Synthèse", "Rapports de mission (1)", "Carnet de mots (1)", "Conversations"].every((s) => html.includes(s)), html.slice(0, 200));
+  check("print élève : script neutralisé", html.includes("&lt;script&gt;") && !html.includes("<script>alert"), "");
+  check("print élève : balise élève neutralisée", html.includes("&lt;b&gt;gras&lt;/b&gt;") || html.includes("&lt;b&gt;"), "");
+  check("print élève : astuce extraite", html.includes("💡 Astuce :") && !html.includes("[[astuce"), "");
+  check("print élève : score mission", html.includes("10/12") && html.includes("Agente Estrella"), "");
+
+  const classe = classReportHtml({
+    className: "5e B",
+    joinCode: "ABC123",
+    rows: [
+      { name: "Léa", progress: undefined, reportCount: 0 },
+      { name: "Tom", progress: { xp: 150, msg_count: 12, missions_completed: 1, best_mission: 8, vocab: [], updated_at: "2026-08-21T10:00:00Z" }, reportCount: 1 },
+    ],
+    printedAt: new Date("2026-08-21"),
+  });
+  check("print classe : 2 élèves listés", classe.includes("Léa") && classe.includes("Tom") && classe.includes("2 élève(s)"), "");
+  check("print classe : niveau calculé", classe.includes("<td>150</td><td>2</td>"), classe);
+}
+
 console.log(failures ? `\n❌ ${failures} échec(s)` : "\n✅ Tous les tests passent");
 process.exit(failures ? 1 : 0);
