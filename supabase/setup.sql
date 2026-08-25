@@ -3,7 +3,7 @@
 -- À coller intégralement dans : Supabase → SQL Editor → Run
 -- ============================================================
 
--- Classes (une par professeur pour commencer)
+-- Classes (une ou plusieurs par professeur, chacune avec son code)
 create table public.classes (
   id uuid primary key default gen_random_uuid(),
   name text not null,

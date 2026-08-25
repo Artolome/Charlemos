@@ -1,8 +1,8 @@
-// Tableau de bord professeur (mode « classe ») : création de la classe,
-// code d'inscription, suivi des élèves, lecture des conversations et
-// des rapports de mission, export CSV.
+// Tableau de bord professeur (mode « classe ») : gestion de plusieurs
+// classes (sélecteur + création), code d'inscription, suivi des élèves,
+// lecture des conversations, rapports de mission, exports CSV/imprimables.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
@@ -10,6 +10,7 @@ import {
   Copy,
   Download,
   Loader2,
+  Plus,
   Printer,
   RefreshCw,
   School,
@@ -77,27 +78,41 @@ export function TeacherView() {
   const { profile } = useSession();
   const { pushToast } = useApp();
   const [loading, setLoading] = useState(true);
-  const [klass, setKlass] = useState<ClassRow | null>(null);
+  const [classes, setClasses] = useState<ClassRow[]>([]);
+  const [activeId, setActiveId] = useState<string | null>(null);
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [progressRows, setProgressRows] = useState<Map<string, ProgressRow>>(new Map());
   const [reports, setReports] = useState<ReportRow[]>([]);
   const [className, setClassName] = useState("");
+  const [showNewClass, setShowNewClass] = useState(false);
   const [selected, setSelected] = useState<StudentRow | null>(null);
 
-  const refresh = useCallback(async () => {
+  // Classe actuellement affichée (miroir en ref pour les rafraîchissements)
+  const activeIdRef = useRef<string | null>(null);
+  const klass = classes.find((c) => c.id === activeId) ?? null;
+
+  const refresh = useCallback(async (targetId?: string) => {
     const sb = getSupabase();
     if (!sb || !profile) return;
     setLoading(true);
     try {
-      const { data: classes } = await sb
+      const { data: cls } = await sb
         .from("classes")
         .select("id, name, join_code")
         .eq("teacher_id", profile.id)
-        .order("created_at")
-        .limit(1);
-      const k = classes?.[0] ?? null;
-      setKlass(k);
-      if (!k) return;
+        .order("created_at");
+      const list = (cls ?? []) as ClassRow[];
+      setClasses(list);
+      const wanted = targetId ?? activeIdRef.current;
+      const k = list.find((c) => c.id === wanted) ?? list[0] ?? null;
+      activeIdRef.current = k?.id ?? null;
+      setActiveId(k?.id ?? null);
+      if (!k) {
+        setStudents([]);
+        setProgressRows(new Map());
+        setReports([]);
+        return;
+      }
 
       const { data: profs } = await sb
         .from("profiles")
@@ -140,17 +155,30 @@ export function TeacherView() {
     const sb = getSupabase();
     if (!sb || !profile || !className.trim()) return;
     const code = makeJoinCode();
-    const { error } = await sb.from("classes").insert({
-      name: className.trim(),
-      join_code: code,
-      teacher_id: profile.id,
-    });
-    if (error) {
-      pushToast({ emoji: "⚠️", title: `Création impossible : ${error.message}` });
+    const { data: created, error } = await sb
+      .from("classes")
+      .insert({
+        name: className.trim(),
+        join_code: code,
+        teacher_id: profile.id,
+      })
+      .select("id, name")
+      .single();
+    if (error || !created) {
+      pushToast({ emoji: "⚠️", title: `Création impossible : ${error?.message ?? "?"}` });
       return;
     }
     setClassName("");
-    void refresh();
+    setShowNewClass(false);
+    setSelected(null);
+    pushToast({ emoji: "🏫", title: `Classe « ${created.name} » créée !` });
+    void refresh(created.id);
+  };
+
+  const selectClass = (id: string) => {
+    if (id === activeId) return;
+    setSelected(null);
+    void refresh(id);
   };
 
   const copyCode = async () => {
@@ -251,6 +279,53 @@ export function TeacherView() {
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto max-w-4xl px-4 pb-16 pt-8">
+        {/* Sélecteur de classes + création */}
+        <div className="mb-4 flex flex-wrap items-center gap-2">
+          {classes.map((c) => (
+            <button
+              key={c.id}
+              onClick={() => selectClass(c.id)}
+              className={`rounded-xl px-3 py-1.5 text-sm font-bold transition-colors ${
+                c.id === activeId
+                  ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                  : "bg-white text-slate-600 ring-1 ring-orange-200 hover:bg-orange-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+              }`}
+            >
+              {c.name}
+            </button>
+          ))}
+          {showNewClass ? (
+            <span className="flex items-center gap-1.5">
+              <input
+                autoFocus
+                value={className}
+                onChange={(e) => setClassName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void createClass();
+                  if (e.key === "Escape") setShowNewClass(false);
+                }}
+                placeholder="Ex. : 5e A — Espagnol"
+                className="rounded-xl border border-orange-200 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 dark:border-slate-700 dark:bg-slate-950"
+              />
+              <button
+                onClick={() => void createClass()}
+                disabled={!className.trim()}
+                className="rounded-xl bg-emerald-500 px-3 py-1.5 text-sm font-bold text-white hover:bg-emerald-600 disabled:opacity-50"
+              >
+                Créer
+              </button>
+            </span>
+          ) : (
+            <button
+              onClick={() => setShowNewClass(true)}
+              className="flex items-center gap-1 rounded-xl border-2 border-dashed border-orange-300 px-3 py-1.5 text-sm font-bold text-orange-600 hover:bg-orange-50 dark:border-orange-800 dark:text-orange-400 dark:hover:bg-slate-900"
+              title="Créer une nouvelle classe (avec son propre code d'inscription)"
+            >
+              <Plus className="h-4 w-4" /> Nouvelle classe
+            </button>
+          )}
+        </div>
+
         <div className="flex flex-wrap items-center gap-3">
           <h1 className="font-display text-3xl font-extrabold">
             {klass.name} <span className="text-slate-400">·</span>{" "}
