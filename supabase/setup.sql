@@ -81,17 +81,6 @@ alter table public.usage_log enable row level security; -- aucune policy : servi
 create policy "prof gere ses classes" on public.classes
   for all using (teacher_id = auth.uid()) with check (teacher_id = auth.uid());
 
--- Recherche d'une classe par code (inscription élève), sans exposer la table
-create or replace function public.class_by_code(code text)
-returns table (id uuid, name text)
-language sql
-security definer
-set search_path = public
-as $$
-  select id, name from public.classes where upper(join_code) = upper(trim(code));
-$$;
-grant execute on function public.class_by_code(text) to anon, authenticated;
-
 -- L'utilisateur courant est-il le professeur de cet élève ?
 -- (security definer : évite la récursion des policies sur profiles)
 create or replace function public.is_my_student(student uuid)
@@ -107,6 +96,10 @@ as $$
     where p.id = student and c.teacher_id = auth.uid()
   );
 $$;
+
+-- Réservée aux comptes connectés (les règles RLS en ont besoin)
+revoke execute on function public.is_my_student(uuid) from public, anon;
+grant execute on function public.is_my_student(uuid) to authenticated;
 
 -- Profils
 create policy "voir son profil" on public.profiles
