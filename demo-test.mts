@@ -102,13 +102,58 @@ function play(agentId: string, userMsgs: string[]): string[] {
   check("chispa : « está » (accent) accepté au piège", r[4].includes("Impresionante"), r[4]);
 }
 
-// ---- 5) Agent libre : élève bloqué → encouragement sans avancer ----
+// ---- 5) Mateo : dialogue guidé, indices et relances ----
 {
-  const r = play("mateo", ["??", "Me gusta el deporte", "no sé", "el fútbol"]);
-  check("mateo : « ?? » → encouragement", r[0].includes("💡"));
-  check("mateo : réponse 1 du fil ensuite", r[1].includes("asignatura favorita"), r[1]);
-  check("mateo : « no sé » → encouragement à nouveau", r[2].includes("💡"));
-  check("mateo : le fil reprend à la réponse 2", r[3].includes("bocadillo de tortilla"), r[3]);
+  const r = play("mateo", [
+    "??", //                indice « Me llamo »
+    "Léo", //               prénom accepté → asignatura
+    "le sport", //          français → indice modèle
+    "historia", //          accepté → recreo
+    "una manzana", //       accepté → l'heure
+    "a las 12", //          accepté → mascota
+    "tengo un perro", //    accepté → au revoir
+    "hola otra vez", //     relance → question du prénom
+  ]);
+  check("mateo : « ?? » → indice Me llamo", r[0].includes("Me llamo"), r[0]);
+  check("mateo : prénom → question asignatura", r[1].includes("asignatura favorita"), r[1]);
+  check("mateo : réponse française → modèle espagnol", r[2].includes("Mi asignatura favorita es"), r[2]);
+  check("mateo : puis avance vers le recreo", r[3].includes("bocadillo de tortilla"), r[3]);
+  check("mateo : avance vers l'heure", r[4].includes("A qué hora"), r[4]);
+  check("mateo : avance vers la mascota", r[5].includes("Canela"), r[5]);
+  check("mateo : fin du dialogue", r[6].includes("Hasta luego"), r[6]);
+  check("mateo : relance → question du prénom", r[7].includes("Cómo te llamas"), r[7]);
+}
+
+// ---- 5bis) Mateo : « ok » n'est pas un prénom ----
+{
+  const r = play("mateo", ["ok"]);
+  check("mateo : « ok » → on repose la question", r[0].includes("Seguimos"), r[0]);
+}
+
+// ---- 5ter) Lucía : dialogue guidé complet ----
+{
+  const r = play("lucia", [
+    "me gusta la musica",
+    "escucho rap",
+    "prefiero las series",
+    "quiero un perro",
+    "voy a jugar al futbol",
+    "hola",
+  ]);
+  check("lucía : goûts → question musique", r[0].includes("vallenato"), r[0]);
+  check("lucía : musique → chévere/guay", r[1].includes("chévere"), r[1]);
+  check("lucía : préférence → Kiwi", r[2].includes("Kiwi"), r[2]);
+  check("lucía : mascota → fin de semana", r[3].includes("fin de semana"), r[3]);
+  check("lucía : week-end → au revoir", r[4].includes("Kiwi dice"), r[4]);
+  check("lucía : relance → question des goûts", r[5].includes("Qué te gusta a ti"), r[5]);
+}
+
+// ---- 5quater) Diego : hésitation bonito o extraño ----
+{
+  const r = play("diego", ["sí", "bonito o extraño ?", "me parece bonito"]);
+  check("diego : sí → Las Meninas", r[0].includes("Las Meninas"), r[0]);
+  check("diego : « bonito o extraño ? » → choisir", r[1].includes("elige una sola"), r[1]);
+  check("diego : puis avance (58 versiones)", r[2].includes("58 versiones"), r[2]);
 }
 
 // ---- 6) « no » n'est PAS traité comme blocage (réponse légitime) ----
@@ -217,6 +262,57 @@ function play(agentId: string, userMsgs: string[]): string[] {
   ]);
   check("texte : « de todos modos » (plus de « igualmente »)", r[3].includes("de todos modos") && !r[3].includes("igualmente"), r[3]);
   check("texte : le Reina Sofía cité au reveal du Guernica", r[6].includes("Reina Sofía"), r[6]);
+}
+
+// ---- 17) Recopier la phrase-modèle est une BONNE réponse (pas un écho) ----
+{
+  const r = play("mateo", [
+    "Léo",
+    "Mi asignatura favorita es Educación Física", // phrase-modèle exacte du personnage
+    "Como un bocadillo de tortilla", //             idem
+  ]);
+  check("modèle : « Mi asignatura favorita es E.F. » accepté", r[1].includes("recreo"), r[1]);
+  check("modèle : « Como un bocadillo » accepté", r[2].includes("A qué hora"), r[2]);
+  const r2 = play("lucia", [
+    "me gusta la musica",
+    "escucho rap",
+    "prefiero las series",
+    "tengo un gato",
+    "Voy a jugar al vóley con mis amigas", // phrase de Lucía réutilisée : parfaite !
+  ]);
+  check("modèle : « Voy a jugar al vóley... » accepté", r2[4].includes("Kiwi dice"), r2[4]);
+}
+
+// ---- 18) « ¿y tú? » en retour n'est plus grondé ----
+{
+  const r = play("lucia", ["me gusta la musica", "escucho rap", "Prefiero las series, ¿y tú?"]);
+  check("« Prefiero las series, ¿y tú? » accepté", r[2].includes("Kiwi"), r[2]);
+}
+
+// ---- 19) « no entiendo » = détresse, jamais une réponse ----
+{
+  const r = play("valeria", ["no entiendo"]);
+  check("valeria : « no entiendo » → indice, pas d'avance", r[0].includes("Sí o no"), r[0]);
+}
+
+// ---- 20) « ¿Cómo? » (pardon ?) n'est plus pris pour « je mange » ----
+{
+  const r = play("mateo", ["Léo", "historia", "¿Cómo?"]);
+  check("mateo : « ¿Cómo? » au goûter → indice", r[2].includes("Como una fruta"), r[2]);
+}
+
+// ---- 21) Coller la liste entière de l'intrus → choisir ----
+{
+  const r = play("capitan", [
+    "1",
+    "Me llamo Léo y tengo 12 años",
+    "naranja",
+    "Yo tengo 12 años",
+    "el Guernica",
+    "Me gusta leer",
+    "manzana plátano naranja mochila",
+  ]);
+  check("intrus : liste collée → choisir", r[6].includes("elige una sola"), r[6]);
 }
 
 console.log(failures ? `\n❌ ${failures} échec(s)` : "\n✅ Tous les tests passent");

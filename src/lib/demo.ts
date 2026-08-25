@@ -1,15 +1,18 @@
 // Mode démo : réponses préenregistrées diffusées mot à mot, sans appel API.
 // Permet de découvrir l'interface en classe ou avant d'avoir configuré une clé.
 //
-// Le mode démo est RÉACTIF pour les défis à bonne réponse (mission du Capitán,
-// mini-reto du Profesor Chispa) : bonne réponse → on avance ; mauvaise →
-// indice et « inténtalo otra vez » ; deuxième échec → la réponse est donnée
-// et on continue (comme le vrai protocole IA). Le score final reflète les
-// réussites réelles de l'élève.
+// Le mode démo est RÉACTIF pour les SIX personnages :
+// - mission du Capitán et mini-reto de Chispa : bonne réponse → on avance ;
+//   mauvaise → indice « inténtalo otra vez » ; 2e échec → la réponse est
+//   donnée et on continue. Le score final reflète les réussites réelles.
+// - Mateo, Valeria, Diego, Lucía : dialogue guidé — chaque question attend un
+//   type de réponse en espagnol ; réponse à côté → le personnage donne un
+//   modèle (« Escribe: “Mi asignatura favorita es...” ») ; 2e essai raté →
+//   il montre la réponse et continue, sans bloquer ni compter de points.
 //
 // Limite connue : les conversations démo enregistrées AVANT cette version
-// (où tout avançait sans vérification) peuvent se rejouer différemment ;
-// il suffit de réinitialiser la conversation (bouton corbeille).
+// peuvent se rejouer différemment ; il suffit de réinitialiser la
+// conversation (bouton corbeille).
 
 import type { AgentDef, ChatMessage } from "./types";
 
@@ -68,13 +71,13 @@ interface QuestStep {
   check: (answer: string) => boolean;
   /** Relance bienveillante à la 1re mauvaise réponse (ne fait pas avancer) */
   hint: string;
-  /** Au 2e échec : la bonne réponse est donnée, puis on continue */
+  /** Au 2e échec : la bonne réponse est donnée / modélisée, puis on continue */
   reveal: string;
   /** Réaction à une bonne réponse, suivie du défi suivant */
   success: string;
-  /** Autres options proposées : si la réponse les contient AUSSI, on demande de choisir */
+  /** Autres options proposées : si la réponse hésite entre elles, choisir ! */
   distractors?: string[];
-  /** false = étape d'introduction, non comptée dans le score */
+  /** false = étape d'introduction ou de conversation, non comptée dans le score */
   scored?: boolean;
 }
 
@@ -82,11 +85,23 @@ interface Quest {
   steps: QuestStep[];
   /** Message final ; results = score par étape comptée (2, 1 ou 0 points) */
   final: (results: number[]) => string;
+  /**
+   * true = le message d'accueil du personnage pose déjà la question de
+   * l'étape 0 : le premier message de l'élève est donc évalué directement.
+   * false/absent = le premier message lance la quête (cas du Capitán).
+   */
+  firstAskIsStarter?: boolean;
 }
 
-/** Texte de la question sans les marqueurs, pour détecter un copier-coller */
-function stripForEcho(s: string): string {
-  return normalize(s.replace(/\[\[[^\]]*\]\]/g, " "));
+/**
+ * Partie interrogative d'un message (les phrases finissant par « ? »),
+ * normalisée — pour détecter un copier-coller de la question sans pénaliser
+ * l'élève qui réutilise les phrases-modèles déclaratives du personnage.
+ */
+function questionPart(s: string): string {
+  const stripped = s.replace(/\[\[[^\]]*\]\]/g, " ");
+  const fragments = stripped.match(/[^.!?\n¡¿]*\?/g) ?? [];
+  return normalize(fragments.join(" "));
 }
 
 /**
@@ -94,7 +109,7 @@ function stripForEcho(s: string): string {
  * l'état de la quête, et renvoie la réponse au dernier message.
  */
 function runQuest(quest: Quest, userMessages: string[]): string {
-  let pos = -1; // -1 = en attente du premier message (le briefing est le message d'accueil)
+  let pos = quest.firstAskIsStarter ? 0 : -1;
   let attempts = 0;
   let results: number[] = [];
   let reply = quest.steps[0]?.ask ?? "";
@@ -111,24 +126,33 @@ function runQuest(quest: Quest, userMessages: string[]): string {
     const step = quest.steps[pos];
     const na = normalize(raw);
 
-    // Copier-coller de la question : on ne le compte pas comme une réponse
-    if (na.length >= 20 && stripForEcho(step.ask).includes(na)) {
+    // Copier-coller de la QUESTION du personnage : pas une réponse.
+    // (On ne compare que la partie interrogative : réutiliser une
+    // phrase-modèle déclarative reste une excellente réponse !)
+    const q = questionPart(step.ask);
+    if (q.length >= 12 && na.includes(q)) {
       reply = `Jeje, ¡esa es MI pregunta! 😄 Ahora te toca responder a ti:\n\n${step.ask}`;
       continue;
     }
-    const passes = step.check(raw);
+    // « no sé », « no entiendo »... : détresse, jamais une bonne réponse
+    // (sauf étape d'introduction sans indice, où tout fait avancer)
+    const helpless = isHelpless(raw) && step.hint !== "";
+    const passes = !helpless && step.check(raw);
     // « ok », « merci »... après un succès : on repose le défi sans pénalité
     if (!passes && isSmallTalk(raw)) {
       reply = `¡Vale! 😊 Seguimos:\n\n${step.ask}`;
       continue;
     }
-    // L'élève hésite entre les options (« ¿azul o naranja? ») : il doit choisir !
+    // L'élève hésite entre les options (« ¿azul o naranja? ») : il doit
+    // choisir ! (Poser une question en retour, « ¿y tú? », reste permis.)
     const nSpaced = ` ${na} `;
+    const distractorHits =
+      step.distractors?.filter((d) => hasWord(raw, d)).length ?? 0;
     const hesitates =
       passes &&
-      step.distractors !== undefined &&
-      hasWord(raw, ...step.distractors) &&
-      (raw.includes("?") || nSpaced.includes(" o ") || nSpaced.includes(" ou "));
+      (distractorHits >= 2 ||
+        (distractorHits >= 1 &&
+          (nSpaced.includes(" o ") || nSpaced.includes(" ou "))));
     if (hesitates) {
       reply = `¡Las dos opciones no, elige una sola! 😄\n\n${step.ask}`;
       continue;
@@ -155,7 +179,7 @@ function runQuest(quest: Quest, userMessages: string[]): string {
 }
 
 // ---------------------------------------------------------------
-// Mission de démonstration du Capitán (6 étapes vérifiées)
+// Mission de démonstration du Capitán (6 étapes vérifiées, notées)
 // ---------------------------------------------------------------
 
 // Mots espagnols acceptés comme « vraie phrase » à l'étape du fantasma
@@ -189,7 +213,6 @@ const PALABRAS_ACTIVIDADES = [
   "dibujo",
   "dormir",
   "duermo",
-  "como",
   "cocino",
   "cocinar",
   "paseo",
@@ -281,7 +304,7 @@ const MISSION_QUEST: Quest = {
 };
 
 // ---------------------------------------------------------------
-// Mini-reto de démonstration du Profesor Chispa (ser / estar)
+// Mini-reto de démonstration du Profesor Chispa (ser / estar, noté)
 // ---------------------------------------------------------------
 
 const CHISPA_QUEST: Quest = {
@@ -332,53 +355,404 @@ const CHISPA_QUEST: Quest = {
 };
 
 // ---------------------------------------------------------------
-// Conversations libres (Mateo, Valeria, Diego, Lucía)
+// Dialogues guidés des correspondants (non notés : un modèle est donné
+// si la réponse est à côté, puis la conversation continue)
 // ---------------------------------------------------------------
 
-const DEMO_REPLIES: Record<string, string[]> = {
-  mateo: [
-    "¡Genial! 😃 Yo estoy en 2º de ESO. Mi asignatura favorita es Educación Física. ¿Cuál es tu asignatura favorita?",
-    "¡Qué guay! A mí no me gustan las Matemáticas... En el recreo como un bocadillo de tortilla. ¿Qué comes tú en el recreo?\n[[astuce: On dit « me gusta el fútbol », pas « me gusta fútbol ».]]",
-    "¡Qué rico! En España comemos a las dos y media. ¿A qué hora comes tú?",
-    "¿En serio? ¡Es muy pronto! 😄 Yo tengo una perra, se llama Canela. ¿Tienes una mascota (un animal de compagnie)?",
+const MUSICAS = [
+  "musica",
+  "escucho",
+  "pop",
+  "rap",
+  "rock",
+  "reggaeton",
+  "kpop",
+  "electro",
+  "clasica",
+  "jazz",
+  "todo",
+  "nada",
+  "cancion",
+  "canciones",
+];
+
+const MASCOTAS = [
+  "si",
+  "no",
+  "tengo",
+  "quiero",
+  "perro",
+  "perra",
+  "gato",
+  "gata",
+  "mascota",
+  "hamster",
+  "conejo",
+  "pez",
+  "peces",
+  "pajaro",
+  "tortuga",
+  "caballo",
+  "animal",
+];
+
+const MATEO_QUEST: Quest = {
+  firstAskIsStarter: true,
+  steps: [
+    {
+      ask: "¡Hola! 👋 Soy Mateo, de Madrid. Tengo 13 años y estoy en 2º de ESO (es como la 4ème en Francia). ¿Y tú? ¿Cómo te llamas?",
+      check: (a) => !isHelpless(a) && !isSmallTalk(a),
+      hint: "¿Tu nombre? 😊 Escribe: « Me llamo ... ». ¡Inténtalo!",
+      reveal: "No pasa nada. 😊 Yo digo: « Me llamo Mateo ». ¡Mucho gusto!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡Genial! 😃 ¡Mucho gusto! Mi asignatura favorita es Educación Física. ¿Cuál es tu asignatura favorita?",
+      check: (a) =>
+        hasWord(
+          a,
+          "asignatura",
+          "favorita",
+          "gusta",
+          "espanol",
+          "frances",
+          "ingles",
+          "matematicas",
+          "mates",
+          "historia",
+          "geografia",
+          "ciencias",
+          "fisica",
+          "quimica",
+          "musica",
+          "arte",
+          "plastica",
+          "tecnologia",
+          "deporte",
+          "educacion",
+          "dibujo",
+          "lengua",
+          "svt",
+        ),
+      hint: "¿Tu asignatura favorita? 📚 Por ejemplo: Historia, Matemáticas, Música, Español... Escribe: « Mi asignatura favorita es ... ». ¡Inténtalo!",
+      reveal:
+        "Te ayudo: puedes decir « Mi asignatura favorita es Español » 😉. ¡Seguro que la próxima vez lo dices tú!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡Qué guay! A mí no me gustan las Matemáticas... En el recreo como un bocadillo de tortilla. ¿Qué comes tú en el recreo?\n[[astuce: On dit « me gusta el fútbol », pas « me gusta fútbol ».]]",
+      // « como » (je mange) est exclu : impossible à distinguer de « ¿cómo? » (pardon ?)
+      check: (a) =>
+        hasWord(
+          a,
+          "bocadillo",
+          "sandwich",
+          "fruta",
+          "manzana",
+          "platano",
+          "galletas",
+          "chocolate",
+          "pan",
+          "croissant",
+          "cereales",
+          "yogur",
+          "zumo",
+          "nada",
+          "barrita",
+          "compota",
+          "brioche",
+        ),
+      hint: "¿Qué comes? 🥪 Pista: « Como una fruta » o « Como un bocadillo ». ¡Inténtalo en español!",
+      reveal: "Yo te ayudo: puedes decir « Como una manzana » 🍎 (une pomme). ¡Qué rico!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡Qué rico! En España comemos a las dos y media. ¿A qué hora comes tú?",
+      check: (a) =>
+        /\d/.test(a) || hasWord(a, "una", "dos", "doce", "once", "mediodia", "hora", "las"),
+      hint: "¿A qué hora? 🕐 Pista: « Como a las doce » o « a las 12 ». ¡Inténtalo!",
+      reveal: "Por ejemplo: « Como a las doce y media » (midi et demi). ¡Muy pronto para mí!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¿En serio? ¡Es muy pronto! 😄 Yo tengo una perra, se llama Canela. ¿Tienes una mascota (un animal de compagnie)?",
+      check: (a) => hasWord(a, ...MASCOTAS),
+      hint: "¿Mascota? 🐶 Responde: « Sí, tengo un perro » o « No, no tengo ». ¡Inténtalo!",
+      reveal: "Puedes decir: « No, no tengo mascota » o « Sí, tengo un gato » 🐱.",
+      success: "",
+      scored: false,
+    },
   ],
-  valeria: [
-    "¡Órale (waouh)! ¿Sabes qué es el Día de Muertos? El 1 y el 2 de noviembre, en México, hacemos altares con flores naranjas, el cempasúchil. ¿En Francia hay una fiesta parecida?",
-    "¡Qué interesante! 🦋 Yo he visitado las montañas donde duermen las mariposas monarca. Son millones y vuelan desde Canadá. ¿Te gustan los animales?\n[[astuce: « He visitado » = j'ai visité (pretérito perfecto).]]",
-    "La neta (la vérité), mi comida favorita es el mole, una salsa con chocolate y chile. ¿Cuál es tu comida favorita?",
-    "¡Padrísimo! Un día quiero ver el Machu Picchu, en Perú. ¿Qué país quieres visitar tú?",
-  ],
-  diego: [
-    "Se cuenta que en el museo del Prado hay un cuadro muy misterioso: Las Meninas de Velázquez. El pintor está DENTRO de su propio cuadro, mirándote a ti... 👀 ¿Te parece bonito o extraño?",
-    "¡A mí también! ¿Sabes qué pasó entonces? Picasso miró Las Meninas y pintó ¡58 versiones! Los artistas se inspiran unos a otros. ¿Te gusta dibujar o pintar?\n[[astuce: « Me gusta dibujar » : gustar + infinitif pour dire ce qu'on aime faire.]]",
-    "Entonces te va a encantar esta historia: en España, el Ratoncito Pérez toma los dientes de los niños, ¡como la petite souris! ¿Qué sientes: sorpresa o alegría?",
-    "El flamenco es alegría y tristeza al mismo tiempo. Mi tía Carmen baila con un vestido rojo precioso. ¿Qué música escuchas tú?",
-  ],
-  lucia: [
-    "¡Qué chévere! 😍 A mí me encanta la música, canto en un coro. En verano, en Bogotá, escucho vallenato con mis primos. ¿Qué música escuchas tú?",
-    "¡No te creo! ¡A mí también! 😄 En Colombia decimos « ¡qué chévere! », en España dicen « ¡qué guay! ». ¿Prefieres los videojuegos o las series?\n[[astuce: « Prefiero » = je préfère (verbe preferir, e→ie).]]",
-    "Yo tengo un loro que se llama Kiwi 🦜 y repite « ¡hola, hola! » todo el día. ¿Tienes una mascota o quieres una?",
-    "¡Jajaja! Cuéntame: ¿qué vas a hacer este fin de semana? Yo voy a jugar al vóley con mis amigas.",
-  ],
+  final: () =>
+    "¡Qué guay hablar contigo! 😄 Ahora me voy a entrenar al fútbol. Escríbeme otra vez para recomenzar, o habla con Valeria, Diego o Lucía. ¡Hasta luego! ⚽ (En mode classe, la vraie IA fait continuer la conversation librement !)",
 };
 
-// Si l'élève est bloqué (« ?? », « no sé »...), on encourage au lieu d'avancer
-const ENCOURAGEMENTS: Record<string, string> = {
-  mateo:
-    "¡No pasa nada! 😊 Responde con una frase corta, por ejemplo « Me gusta... » o « Mi asignatura favorita es... ». Astuce : le bouton 💡 en bas te propose des idées de réponse. ¿Lo intentas?",
-  valeria:
-    "Tranquilo, tranquila. 🦋 Puedes responder con pocas palabras, por ejemplo « No conozco México » o « Me gusta la playa ». Astuce : le bouton 💡 en bas te donne des idées. ¿Lo intentas?",
-  diego:
-    "No pasa nada. 🎨 Puedes responder simplemente « sí », « no » o « me gusta ». Astuce : le bouton 💡 en bas te souffle des réponses. ¿Lo intentas?",
-  lucia:
-    "¡Tranqui! 💌 Responde con una palabra si quieres: « música », « deporte », « videojuegos »... Astuce : le bouton 💡 en bas te donne des idées. ¿Qué eliges?",
+const VALERIA_QUEST: Quest = {
+  firstAskIsStarter: true,
+  steps: [
+    {
+      ask: "¡Hola, hola! 🦋 Soy Valeria, de Oaxaca, en el sur de México. Me encanta viajar y tomar fotos de fiestas y paisajes. ¿Conoces México, sí o no?",
+      check: (a) => hasWord(a, "si", "no", "conozco", "mexico"),
+      hint: "¿Sí o no? 😊 Responde: « Sí » o « No, no conozco México ». ¡Inténtalo!",
+      reveal: "Puedes decir: « No, no conozco México » — ¡pues te lo enseño yo! 🦋",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡Órale (waouh)! ¿Sabes qué es el Día de Muertos? El 1 y el 2 de noviembre, en México, hacemos altares con flores naranjas, el cempasúchil. ¿En Francia hay una fiesta parecida?",
+      check: (a) =>
+        hasWord(a, "si", "no", "hay", "fiesta", "toussaint", "halloween", "navidad", "carnaval"),
+      hint: "Piensa en Francia... 🎃 Pista: « Sí, hay una fiesta: Halloween » o « la Toussaint ». ¡Inténtalo!",
+      reveal: "En Francia se celebra la Toussaint, el 1 de noviembre — ¡un poco parecida! 🕯️",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡Qué interesante! 🦋 Yo he visitado las montañas donde duermen las mariposas monarca. Son millones y vuelan desde Canadá. ¿Te gustan los animales?\n[[astuce: « He visitado » = j'ai visité (pretérito perfecto).]]",
+      check: (a) => hasWord(a, "si", "no", "gustan", "gusta", "encantan", "animales"),
+      hint: "¿Te gustan? 🦋 Responde: « Sí, me gustan » o « No, no me gustan ». ¡Ojo: gustan avec N (pluriel) !",
+      reveal: "Se dice: « Sí, me gustan los animales » (gustan, avec un N, car pluriel). 😉",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "La neta (la vérité), mi comida favorita es el mole, una salsa con chocolate y chile. ¿Cuál es tu comida favorita?",
+      check: (a) =>
+        hasWord(
+          a,
+          "comida",
+          "favorita",
+          "gusta",
+          "pizza",
+          "pasta",
+          "hamburguesa",
+          "pollo",
+          "arroz",
+          "chocolate",
+          "crepe",
+          "crepes",
+          "queso",
+          "ensalada",
+          "sopa",
+          "tacos",
+          "patatas",
+          "pan",
+          "pescado",
+          "carne",
+          "sushi",
+        ),
+      hint: "¿Tu comida favorita? 🍽️ Escribe: « Mi comida favorita es la pizza » (por ejemplo). ¡Inténtalo!",
+      reveal: "Puedes decir: « Mi comida favorita es la pasta » 🍝. La neta, ¡todo está rico!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡Padrísimo! Un día quiero ver el Machu Picchu, en Perú. ¿Qué país quieres visitar tú?",
+      check: (a) =>
+        hasWord(
+          a,
+          "quiero",
+          "visitar",
+          "pais",
+          "espana",
+          "mexico",
+          "peru",
+          "argentina",
+          "colombia",
+          "japon",
+          "italia",
+          "francia",
+          "chile",
+          "cuba",
+          "brasil",
+          "portugal",
+          "inglaterra",
+          "china",
+          "canada",
+          "marruecos",
+          "estados",
+          "grecia",
+        ),
+      hint: "¿Qué país? 🌎 Escribe: « Quiero visitar España » (por ejemplo). ¡Inténtalo!",
+      reveal: "Por ejemplo: « Quiero visitar México » 🇲🇽 — ¡órale, buena elección!",
+      success: "",
+      scored: false,
+    },
+  ],
+  final: () =>
+    "¡Padrísimo hablar contigo! 🦋 Me voy a tomar fotos al mercado. Escríbeme otra vez para recomenzar, o habla con otro personaje. ¡Hasta pronto! (En mode classe, la vraie IA continue la conversation librement !)",
 };
-const ENCOURAGEMENT_LIST = Object.values(ENCOURAGEMENTS);
 
-/** Vrai pour un encouragement complet OU interrompu en cours de diffusion */
-function isEncouragementContent(content: string): boolean {
-  return content.length > 0 && ENCOURAGEMENT_LIST.some((e) => e.startsWith(content));
-}
+const DIEGO_QUEST: Quest = {
+  firstAskIsStarter: true,
+  steps: [
+    {
+      ask: "¡Buenas! 🎨 Soy Diego, de Sevilla. Me encantan el arte, la música y las leyendas misteriosas. ¿Te cuento una historia? Responde: sí o no.",
+      check: (a) => hasWord(a, "si", "no", "vale", "cuenta", "cuentame", "historia"),
+      hint: "¿Sí o no? 🎨 Responde simplemente: « Sí » o « No ». ¡Inténtalo!",
+      reveal: "Imagino que sí... 😄 ¡Te la cuento!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "Se cuenta que en el museo del Prado hay un cuadro muy misterioso: Las Meninas de Velázquez. El pintor está DENTRO de su propio cuadro, mirándote a ti... 👀 ¿Te parece bonito o extraño?",
+      check: (a) =>
+        hasWord(
+          a,
+          "bonito",
+          "bonita",
+          "extrano",
+          "extrana",
+          "precioso",
+          "raro",
+          "rara",
+          "misterioso",
+          "interesante",
+          "parece",
+          "guay",
+          "feo",
+          "miedo",
+        ),
+      distractors: ["bonito", "extrano"],
+      hint: "¿Qué sientes? 🎨 Responde: « Me parece bonito » o « Me parece extraño ». ¡Inténtalo!",
+      reveal: "Puedes decir: « Me parece misterioso » 👀. ¡A mí también!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡A mí también! ¿Sabes qué pasó entonces? Picasso miró Las Meninas y pintó ¡58 versiones! Los artistas se inspiran unos a otros. ¿Te gusta dibujar o pintar?\n[[astuce: « Me gusta dibujar » : gustar + infinitif pour dire ce qu'on aime faire.]]",
+      check: (a) => hasWord(a, "si", "no", "gusta", "encanta", "dibujar", "pintar", "dibujo", "pinto"),
+      distractors: ["dibujar", "pintar"],
+      hint: "Responde: « Sí, me gusta dibujar » o « No, no me gusta ». 🖌️ ¡Inténtalo!",
+      reveal: "Se dice: « Me gusta dibujar » — gustar + infinitivo. 😉",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "Entonces te va a encantar esta historia: en España, el Ratoncito Pérez toma los dientes de los niños, ¡como la petite souris! ¿Qué sientes: sorpresa o alegría?",
+      check: (a) =>
+        hasWord(a, "sorpresa", "alegria", "siento", "miedo", "nada", "divertido", "gracia"),
+      distractors: ["sorpresa", "alegria"],
+      hint: "¿Sorpresa o alegría? 🐭 Responde: « Siento sorpresa » o simplemente « ¡Sorpresa! ». ¡Inténtalo!",
+      reveal: "Puedes decir: « ¡Qué sorpresa! » 😄",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "El flamenco es alegría y tristeza al mismo tiempo. Mi tía Carmen baila con un vestido rojo precioso. ¿Qué música escuchas tú?",
+      check: (a) => hasWord(a, ...MUSICAS),
+      hint: "¿Tu música? 🎵 Escribe: « Escucho pop » o « Escucho rap ». ¡Inténtalo!",
+      reveal: "Por ejemplo: « Escucho pop » 🎧. ¡Buena elección!",
+      success: "",
+      scored: false,
+    },
+  ],
+  final: () =>
+    "¡Ha sido genial, artista! 🎨 Me voy a dibujar al río. Escríbeme otra vez para recomenzar, o habla con otro personaje. ¡Hasta luego! (En mode classe, la vraie IA invente de nouvelles histoires à chaque fois !)",
+};
+
+const LUCIA_QUEST: Quest = {
+  firstAskIsStarter: true,
+  steps: [
+    {
+      ask: "¡Hola! 💌 Soy Lucía. Vivo en Madrid, pero mi familia es de Bogotá, en Colombia. Contigo puedo hablar de TODO: música, juegos, series, deporte... ¿Qué te gusta a ti?",
+      check: (a) =>
+        hasWord(
+          a,
+          "gusta",
+          "gustan",
+          "encanta",
+          "musica",
+          "deporte",
+          "futbol",
+          "videojuegos",
+          "series",
+          "leer",
+          "bailar",
+          "cantar",
+          "dibujar",
+          "animales",
+          "amigos",
+          "cine",
+          "todo",
+          "nada",
+        ),
+      hint: "¡Lo que sea! 💌 Escribe: « Me gusta la música » o « Me gustan los videojuegos ». ¡Inténtalo!",
+      reveal: "Por ejemplo: « Me gusta la música » 🎶 — ¡a mí también!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡Qué chévere! 😍 A mí me encanta la música, canto en un coro. En verano, en Bogotá, escucho vallenato con mis primos. ¿Qué música escuchas tú?",
+      check: (a) => hasWord(a, ...MUSICAS),
+      hint: "🎵 Escribe: « Escucho pop » (o rap, rock, reggaetón...). ¡Inténtalo!",
+      reveal: "Puedes decir: « Escucho de todo » 🎧 ¡como yo!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡No te creo! ¡Yo también! 😄 En Colombia decimos « ¡qué chévere! », en España dicen « ¡qué guay! ». ¿Prefieres los videojuegos o las series?\n[[astuce: « Prefiero » = je préfère (verbe preferir, e→ie).]]",
+      check: (a) => hasWord(a, "prefiero", "videojuegos", "series", "juegos", "ninguno", "dos"),
+      distractors: ["videojuegos", "series"],
+      hint: "¿Videojuegos o series? 🎮 Responde: « Prefiero los videojuegos » o « Prefiero las series ». ¡Inténtalo!",
+      reveal: "Se dice: « Prefiero los videojuegos » (préférer → preferir). 😉",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "Yo tengo un loro que se llama Kiwi 🦜 y repite « ¡hola, hola! » todo el día. ¿Tienes una mascota o quieres una?",
+      check: (a) => hasWord(a, ...MASCOTAS),
+      hint: "🐾 Responde: « Tengo un gato », « Quiero un perro » o « No tengo ». ¡Inténtalo!",
+      reveal: "Puedes decir: « Quiero un perro » 🐶 — ¡yo también quiero otro!",
+      success: "",
+      scored: false,
+    },
+    {
+      ask: "¡Jajaja! Cuéntame: ¿qué vas a hacer este fin de semana? Yo voy a jugar al vóley con mis amigas.",
+      check: (a) =>
+        hasWord(
+          a,
+          "voy",
+          "jugar",
+          "ver",
+          "salir",
+          "leer",
+          "dormir",
+          "estudiar",
+          "casa",
+          "amigos",
+          "amigas",
+          "futbol",
+          "nada",
+          "familia",
+          "playa",
+          "parque",
+          "deporte",
+          "compras",
+          "cine",
+        ),
+      hint: "Le futur proche : « Voy a + ... » 😊 Ejemplo: « Voy a jugar al fútbol ». ¡Inténtalo!",
+      reveal: "Por ejemplo: « Voy a ver una serie » 📺. ¡Buen fin de semana!",
+      success: "",
+      scored: false,
+    },
+  ],
+  final: () =>
+    "¡Qué chévere hablar contigo! 💌 Kiwi dice « ¡adiós, adiós! » 🦜 Escríbeme otra vez para recomenzar, o habla con otro personaje. (En mode classe, on peut parler de TOUT avec la vraie IA !)",
+};
+
+const QUESTS: Record<string, Quest> = {
+  capitan: MISSION_QUEST,
+  chispa: CHISPA_QUEST,
+  mateo: MATEO_QUEST,
+  valeria: VALERIA_QUEST,
+  diego: DIEGO_QUEST,
+  lucia: LUCIA_QUEST,
+};
 
 // ---------------------------------------------------------------
 // Point d'entrée du moteur démo
@@ -387,24 +761,8 @@ function isEncouragementContent(content: string): boolean {
 /** Calcule la réponse démo (exposé séparément pour les tests) */
 export function demoReplyFor(agent: AgentDef, history: ChatMessage[]): string {
   const userMessages = history.filter((m) => m.role === "user").map((m) => m.content);
-
-  if (agent.id === "capitan") return runQuest(MISSION_QUEST, userMessages);
-  if (agent.id === "chispa") return runQuest(CHISPA_QUEST, userMessages);
-
-  const last = userMessages[userMessages.length - 1] ?? "";
-  if (isHelpless(last)) return ENCOURAGEMENTS[agent.id] ?? ENCOURAGEMENTS.mateo;
-
-  const replies = DEMO_REPLIES[agent.id] ?? DEMO_REPLIES.mateo;
-  // On ne compte ni les encouragements, ni les bulles d'erreur, ni les bulles
-  // vides : ils ne font pas avancer le fil de la conversation préenregistrée.
-  const count = history.filter(
-    (m) =>
-      m.role === "assistant" &&
-      !m.error &&
-      m.content.trim().length > 0 &&
-      !isEncouragementContent(m.content),
-  ).length;
-  return replies[Math.max(0, count - 1) % replies.length];
+  const quest = QUESTS[agent.id] ?? QUESTS.mateo;
+  return runQuest(quest, userMessages);
 }
 
 export async function demoStream(

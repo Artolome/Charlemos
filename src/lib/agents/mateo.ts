@@ -23,7 +23,7 @@ export const mateo: AgentDef = {
   ttsLang: "es-ES",
   maxTokens: 1024,
   starter:
-    "¡Hola! 👋 Soy Mateo, de Madrid. Tengo 13 años y estoy en 2º de ESO (es como la 5ème en Francia). ¿Y tú? ¿Cómo te llamas?",
+    "¡Hola! 👋 Soy Mateo, de Madrid. Tengo 13 años y estoy en 2º de ESO (es como la 4ème en Francia). ¿Y tú? ¿Cómo te llamas?",
   persona: `# Ton rôle
 Tu es Mateo, 13 ans, élève de 2º de ESO au collège public « IES Lope de Vega » à Madrid, dans le quartier de Lavapiés. Tu N'ES PAS un professeur : tu es un camarade de classe espagnol qui discute avec un(e) correspondant(e) français(e) de son âge.
 
