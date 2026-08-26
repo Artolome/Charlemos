@@ -10,17 +10,19 @@ import {
   Copy,
   Download,
   Loader2,
+  Pencil,
   Plus,
   Printer,
   RefreshCw,
   School,
+  Trash2,
   Users,
 } from "lucide-react";
 import { classReportHtml, openPrintWindow, studentReportHtml } from "../lib/print";
 import { AGENTS, agentById } from "../lib/agents";
 import { useApp } from "../lib/context";
 import { parseAssistantContent } from "../lib/markers";
-import { getSupabase, useSession } from "../lib/supabase";
+import { callFunction, getSupabase, useSession } from "../lib/supabase";
 import type { ChatMessage, VocabEntry } from "../lib/types";
 
 interface ClassRow {
@@ -85,6 +87,8 @@ export function TeacherView() {
   const [reports, setReports] = useState<ReportRow[]>([]);
   const [className, setClassName] = useState("");
   const [showNewClass, setShowNewClass] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [renameValue, setRenameValue] = useState("");
   const [selected, setSelected] = useState<StudentRow | null>(null);
 
   // Classe actuellement affichée (miroir en ref pour les rafraîchissements)
@@ -178,7 +182,46 @@ export function TeacherView() {
   const selectClass = (id: string) => {
     if (id === activeId) return;
     setSelected(null);
+    setRenaming(false);
     void refresh(id);
+  };
+
+  const saveRename = async () => {
+    const sb = getSupabase();
+    const name = renameValue.trim();
+    if (!sb || !klass || !name) return;
+    const { error } = await sb.from("classes").update({ name }).eq("id", klass.id);
+    if (error) {
+      pushToast({ emoji: "⚠️", title: `Renommage impossible : ${error.message}` });
+      return;
+    }
+    setRenaming(false);
+    pushToast({ emoji: "✏️", title: `Classe renommée : « ${name} »` });
+    void refresh(klass.id);
+  };
+
+  const deleteClass = async () => {
+    if (!klass) return;
+    const n = students.length;
+    const first =
+      n > 0
+        ? `Supprimer la classe « ${klass.name} » ?\n\n⚠️ Ses ${n} compte(s) élève(s) et TOUTES leurs données (conversations, XP, rapports de mission, carnets) seront définitivement supprimés.\n\nConseil : imprime ou exporte les bilans AVANT si tu veux garder une trace.`
+        : `Supprimer la classe vide « ${klass.name} » ?`;
+    if (!window.confirm(first)) return;
+    if (n > 0 && !window.confirm(`Dernière confirmation : supprimer définitivement ${n} compte(s) élève(s) ? Cette action est irréversible.`)) {
+      return;
+    }
+    setLoading(true);
+    const r = await callFunction({ op: "delete_class", classId: klass.id });
+    if (!r.ok) {
+      setLoading(false);
+      pushToast({ emoji: "⚠️", title: r.error ?? "Suppression impossible." });
+      return;
+    }
+    activeIdRef.current = null;
+    setSelected(null);
+    pushToast({ emoji: "🗑️", title: `Classe « ${klass.name} » supprimée.` });
+    void refresh();
   };
 
   const copyCode = async () => {
@@ -281,19 +324,41 @@ export function TeacherView() {
       <div className="mx-auto max-w-4xl px-4 pb-16 pt-8">
         {/* Sélecteur de classes + création */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          {classes.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => selectClass(c.id)}
-              className={`rounded-xl px-3 py-1.5 text-sm font-bold transition-colors ${
-                c.id === activeId
-                  ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
-                  : "bg-white text-slate-600 ring-1 ring-orange-200 hover:bg-orange-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
-              }`}
-            >
-              {c.name}
-            </button>
-          ))}
+          {classes.map((c) =>
+            renaming && c.id === activeId ? (
+              <span key={c.id} className="flex items-center gap-1.5">
+                <input
+                  autoFocus
+                  value={renameValue}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void saveRename();
+                    if (e.key === "Escape") setRenaming(false);
+                  }}
+                  className="rounded-xl border border-orange-200 bg-white px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 dark:border-slate-700 dark:bg-slate-950"
+                />
+                <button
+                  onClick={() => void saveRename()}
+                  disabled={!renameValue.trim()}
+                  className="rounded-xl bg-emerald-500 px-3 py-1.5 text-sm font-bold text-white hover:bg-emerald-600 disabled:opacity-50"
+                >
+                  OK
+                </button>
+              </span>
+            ) : (
+              <button
+                key={c.id}
+                onClick={() => selectClass(c.id)}
+                className={`rounded-xl px-3 py-1.5 text-sm font-bold transition-colors ${
+                  c.id === activeId
+                    ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
+                    : "bg-white text-slate-600 ring-1 ring-orange-200 hover:bg-orange-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+                }`}
+              >
+                {c.name}
+              </button>
+            ),
+          )}
           {showNewClass ? (
             <span className="flex items-center gap-1.5">
               <input
@@ -364,6 +429,23 @@ export function TeacherView() {
             title="Version imprimable du tableau de classe (ou enregistrer en PDF)"
           >
             <Printer className="h-3.5 w-3.5" /> Imprimer
+          </button>
+          <button
+            onClick={() => {
+              setRenameValue(klass.name);
+              setRenaming(true);
+            }}
+            className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-orange-200 hover:bg-orange-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+            title="Renommer cette classe"
+          >
+            <Pencil className="h-3.5 w-3.5" /> Renommer
+          </button>
+          <button
+            onClick={() => void deleteClass()}
+            className="flex items-center gap-1.5 rounded-xl bg-red-50 px-3 py-2 text-xs font-bold text-red-600 ring-1 ring-red-200 hover:bg-red-100 dark:bg-red-950/40 dark:text-red-300 dark:ring-red-900"
+            title="Supprimer cette classe ET les comptes de ses élèves (irréversible)"
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Supprimer
           </button>
         </div>
 

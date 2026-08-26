@@ -83,6 +83,29 @@ export async function callPublicFunction(
   return { ok: true };
 }
 
+/** Appel authentifié de la fonction Edge (actions du professeur, etc.) */
+export async function callFunction(
+  payload: Record<string, unknown>,
+): Promise<{ ok: boolean; error?: string; data?: Record<string, unknown> }> {
+  const auth = await getFunctionAuth();
+  if (!auth) return { ok: false, error: "Session expirée : reconnecte-toi." };
+  let res: Response;
+  try {
+    res = await fetch(auth.url, {
+      method: "POST",
+      headers: auth.headers,
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    return { ok: false, error: "Le serveur ne répond pas. Vérifie la connexion Internet." };
+  }
+  const data = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!res.ok) {
+    return { ok: false, error: (data.error as string) ?? `Erreur du serveur (${res.status}).` };
+  }
+  return { ok: true, data };
+}
+
 /** En-têtes d'appel de la fonction Edge (proxy IA), avec le jeton de session */
 export async function getFunctionAuth(): Promise<{
   url: string;

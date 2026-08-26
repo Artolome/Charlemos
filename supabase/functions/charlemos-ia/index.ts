@@ -176,7 +176,35 @@ Deno.serve(async (req: Request) => {
   }
   await admin.from("usage_log").insert({ user_id: user.id });
 
-  // 3. Validation de la demande
+  // 3a. Suppression d'une classe par son professeur : retire la classe ET
+  //     les comptes de ses élèves (leurs données suivent, par cascade).
+  if (op === "delete_class") {
+    if (profile.role !== "teacher") {
+      return json(403, { error: "Action réservée au professeur." });
+    }
+    const classId = String(body.classId ?? "");
+    const { data: cls } = await admin
+      .from("classes")
+      .select("id")
+      .eq("id", classId)
+      .eq("teacher_id", user.id)
+      .maybeSingle();
+    if (!cls) return json(404, { error: "Classe introuvable." });
+    const { data: studs } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("class_id", classId)
+      .eq("role", "student");
+    let removed = 0;
+    for (const s of studs ?? []) {
+      const { error } = await admin.auth.admin.deleteUser(s.id);
+      if (!error) removed++;
+    }
+    await admin.from("classes").delete().eq("id", classId);
+    return json(200, { ok: true, removed });
+  }
+
+  // 3b. Validation de la demande IA
   const model = ALLOWED_MODELS.includes(String(body.model))
     ? String(body.model)
     : ALLOWED_MODELS[0];
