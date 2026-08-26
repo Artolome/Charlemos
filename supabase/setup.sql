@@ -128,3 +128,18 @@ create policy "eleve gere ses rapports" on public.mission_reports
   for all using (user_id = auth.uid()) with check (user_id = auth.uid());
 create policy "prof lit les rapports" on public.mission_reports
   for select using (public.is_my_student(user_id));
+
+-- Bilans de compétences générés par l'IA (CECRL / cycle 4)
+create table public.evaluations (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  model text,
+  data jsonb not null,
+  created_at timestamptz not null default now()
+);
+alter table public.evaluations enable row level security;
+-- écrits uniquement par le serveur (service role) ; lecture élève + professeur
+create policy "eleve lit ses evaluations" on public.evaluations
+  for select using (user_id = auth.uid());
+create policy "prof lit les evaluations" on public.evaluations
+  for select using (public.is_my_student(user_id));

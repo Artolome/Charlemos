@@ -9,6 +9,7 @@ import {
   ClipboardList,
   Copy,
   Download,
+  GraduationCap,
   Loader2,
   Pencil,
   Plus,
@@ -18,7 +19,14 @@ import {
   Trash2,
   Users,
 } from "lucide-react";
-import { classReportHtml, openPrintWindow, studentReportHtml } from "../lib/print";
+import {
+  classReportHtml,
+  COMPETENCE_LABELS,
+  MAITRISE_LABELS,
+  openPrintWindow,
+  studentReportHtml,
+  type EvalData,
+} from "../lib/print";
 import { AGENTS, agentById } from "../lib/agents";
 import { useApp } from "../lib/context";
 import { parseAssistantContent } from "../lib/markers";
@@ -66,6 +74,12 @@ interface ConvRow {
   updated_at: string;
 }
 
+interface EvalRow {
+  user_id: string;
+  created_at: string;
+  data: EvalData;
+}
+
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 
 function makeJoinCode(): string {
@@ -85,6 +99,7 @@ export function TeacherView() {
   const [students, setStudents] = useState<StudentRow[]>([]);
   const [progressRows, setProgressRows] = useState<Map<string, ProgressRow>>(new Map());
   const [reports, setReports] = useState<ReportRow[]>([]);
+  const [evals, setEvals] = useState<Map<string, EvalRow>>(new Map());
   const [className, setClassName] = useState("");
   const [showNewClass, setShowNewClass] = useState(false);
   const [renaming, setRenaming] = useState(false);
@@ -115,6 +130,7 @@ export function TeacherView() {
         setStudents([]);
         setProgressRows(new Map());
         setReports([]);
+        setEvals(new Map());
         return;
       }
 
@@ -129,11 +145,17 @@ export function TeacherView() {
 
       const ids = studs.map((s) => s.id);
       if (ids.length > 0) {
-        const [{ data: prog }, { data: reps }] = await Promise.all([
+        const [{ data: prog }, { data: reps }, { data: evs }] = await Promise.all([
           sb.from("progress").select("*").in("user_id", ids),
           sb
             .from("mission_reports")
             .select("*")
+            .in("user_id", ids)
+            .order("created_at", { ascending: false })
+            .limit(200),
+          sb
+            .from("evaluations")
+            .select("user_id, created_at, data")
             .in("user_id", ids)
             .order("created_at", { ascending: false })
             .limit(200),
@@ -142,9 +164,16 @@ export function TeacherView() {
           new Map(((prog ?? []) as ProgressRow[]).map((p) => [p.user_id, p])),
         );
         setReports((reps ?? []) as ReportRow[]);
+        // On ne garde que le bilan le plus récent de chaque élève
+        const latest = new Map<string, EvalRow>();
+        for (const e of (evs ?? []) as EvalRow[]) {
+          if (!latest.has(e.user_id)) latest.set(e.user_id, e);
+        }
+        setEvals(latest);
       } else {
         setProgressRows(new Map());
         setReports([]);
+        setEvals(new Map());
       }
     } finally {
       setLoading(false);
@@ -310,10 +339,19 @@ export function TeacherView() {
   if (selected) {
     return (
       <StudentDetail
+        key={selected.id}
         student={selected}
         className={klass.name}
         progress={progressRows.get(selected.id)}
         reports={reports.filter((r) => r.user_id === selected.id)}
+        evaluation={evals.get(selected.id)}
+        onEvaluated={(row) =>
+          setEvals((m) => {
+            const next = new Map(m);
+            next.set(row.user_id, row);
+            return next;
+          })
+        }
         onBack={() => setSelected(null)}
       />
     );
@@ -478,6 +516,7 @@ export function TeacherView() {
           <div className="mt-6 space-y-2">
             {students.map((s, i) => {
               const p = progressRows.get(s.id);
+              const ev = evals.get(s.id);
               const nbReports = reports.filter((r) => r.user_id === s.id).length;
               return (
                 <motion.button
@@ -505,6 +544,14 @@ export function TeacherView() {
                   <span className="text-xs text-slate-500">
                     📚 {Array.isArray(p?.vocab) ? p.vocab.length : 0} mots
                   </span>
+                  {ev && (
+                    <span
+                      className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-bold text-teal-700 dark:bg-teal-950/60 dark:text-teal-300"
+                      title={`Bilan de compétences du ${new Date(ev.created_at).toLocaleDateString("fr-FR")}`}
+                    >
+                      🎓 {ev.data.niveau_global}
+                    </span>
+                  )}
                   <span className="ml-auto text-xs text-slate-400">
                     {nbReports > 0 && `${nbReports} rapport${nbReports > 1 ? "s" : ""} · `}
                     {p?.updated_at
@@ -528,16 +575,45 @@ function StudentDetail({
   className,
   progress,
   reports,
+  evaluation,
+  onEvaluated,
   onBack,
 }: {
   student: StudentRow;
   className: string;
   progress?: ProgressRow;
   reports: ReportRow[];
+  evaluation?: EvalRow;
+  onEvaluated: (row: EvalRow) => void;
   onBack: () => void;
 }) {
+  const { pushToast } = useApp();
   const [convs, setConvs] = useState<ConvRow[] | null>(null);
   const [openAgent, setOpenAgent] = useState<string | null>(null);
+  const [evalRow, setEvalRow] = useState<EvalRow | null>(evaluation ?? null);
+  const [evaluating, setEvaluating] = useState(false);
+
+  const runEvaluation = async () => {
+    if (evaluating) return;
+    setEvaluating(true);
+    const r = await callFunction({ op: "evaluate_student", studentId: student.id });
+    setEvaluating(false);
+    if (!r.ok) {
+      pushToast({ emoji: "⚠️", title: r.error ?? "Le bilan n'a pas pu être généré." });
+      return;
+    }
+    const data = (r.data?.evaluation ?? null) as EvalData | null;
+    if (data) {
+      const row: EvalRow = {
+        user_id: student.id,
+        created_at: new Date().toISOString(),
+        data,
+      };
+      setEvalRow(row);
+      onEvaluated(row); // synchronise le badge et la fiche côté liste
+      pushToast({ emoji: "🎓", title: "Bilan de compétences généré !" });
+    }
+  };
 
   useEffect(() => {
     const sb = getSupabase();
@@ -575,6 +651,7 @@ function StudentDetail({
                   progress,
                   reports,
                   convs: convs ?? [],
+                  evaluation: evalRow ?? undefined,
                 }),
               )
             }
@@ -592,6 +669,111 @@ function StudentDetail({
           {progress?.missions_completed ?? 0} missions · 📚{" "}
           {Array.isArray(progress?.vocab) ? progress.vocab.length : 0} mots au carnet
         </p>
+
+        {/* Bilan de compétences (CECRL / cycle 4) */}
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          <h2 className="font-display text-lg font-extrabold">
+            Bilan de compétences{" "}
+            <span className="text-xs font-bold text-slate-400">CECRL · cycle 4</span>
+          </h2>
+          <button
+            onClick={() => void runEvaluation()}
+            disabled={evaluating}
+            className="flex items-center gap-1.5 rounded-xl bg-teal-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-teal-700 disabled:opacity-60"
+            title="Analyse par l'IA des écrits de l'élève (conversations + missions)"
+          >
+            {evaluating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <GraduationCap className="h-3.5 w-3.5" />
+            )}
+            {evalRow ? "Actualiser le bilan" : "Générer le bilan"}
+          </button>
+          {evalRow && (
+            <span className="text-xs text-slate-400">
+              dernier bilan : {new Date(evalRow.created_at).toLocaleDateString("fr-FR")}
+            </span>
+          )}
+        </div>
+        {evaluating && (
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">
+            Analyse des écrits de l'élève en cours (10 à 30 secondes)...
+          </p>
+        )}
+        {!evalRow && !evaluating && (
+          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+            Aucun bilan pour l'instant — clique sur « Générer le bilan » : l'IA analyse
+            les productions écrites de l'élève et les positionne sur le CECRL et les
+            compétences du cycle 4.
+          </p>
+        )}
+        {evalRow && (
+          <div className="mt-2 rounded-2xl bg-white p-4 ring-1 ring-orange-100 dark:bg-slate-900 dark:ring-slate-800">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded-xl bg-teal-100 px-3 py-1 font-display text-lg font-extrabold text-teal-700 dark:bg-teal-950/60 dark:text-teal-300">
+                Niveau global : {evalRow.data.niveau_global}
+              </span>
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                Fiabilité : {evalRow.data.fiabilite}
+              </span>
+            </div>
+            <div className="mt-3 space-y-3">
+              {(Array.isArray(evalRow.data.competences) ? evalRow.data.competences : []).map((c) => (
+                <div key={c.code} className="border-t border-orange-100 pt-2.5 dark:border-slate-800">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-extrabold">
+                      {COMPETENCE_LABELS[c.code] ?? c.code}
+                    </span>
+                    <span className="rounded-full bg-teal-100 px-2 py-0.5 text-xs font-bold text-teal-700 dark:bg-teal-950/60 dark:text-teal-300">
+                      {c.niveau}
+                    </span>
+                    <span
+                      className="flex items-center gap-0.5"
+                      title={MAITRISE_LABELS[c.maitrise] ?? ""}
+                    >
+                      {[1, 2, 3, 4].map((i) => (
+                        <span
+                          key={i}
+                          className={`h-2 w-2 rounded-full ${
+                            i <= c.maitrise
+                              ? "bg-teal-500"
+                              : "bg-slate-200 dark:bg-slate-700"
+                          }`}
+                        />
+                      ))}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{c.constat}</p>
+                  {(c.preuves ?? []).length > 0 && (
+                    <p className="mt-0.5 text-xs italic text-slate-400 dark:text-slate-500">
+                      « {(c.preuves ?? []).join(" » · « ")} »
+                    </p>
+                  )}
+                </div>
+              ))}
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <div className="rounded-xl bg-emerald-50 p-2.5 text-xs dark:bg-emerald-950/40">
+                <b>✅ Points forts :</b>{" "}
+                {(Array.isArray(evalRow.data.points_forts) ? evalRow.data.points_forts : []).join(" · ") || "—"}
+              </div>
+              <div className="rounded-xl bg-amber-50 p-2.5 text-xs dark:bg-amber-950/40">
+                <b>🎯 Axes de progrès :</b>{" "}
+                {(Array.isArray(evalRow.data.axes_progres) ? evalRow.data.axes_progres : []).join(" · ") || "—"}
+              </div>
+            </div>
+            {evalRow.data.conseil_eleve && (
+              <p className="mt-2 rounded-xl bg-violet-50 p-2.5 text-xs dark:bg-violet-950/40">
+                💬 <b>Conseil à transmettre à l'élève :</b> {evalRow.data.conseil_eleve}
+              </p>
+            )}
+            <p className="mt-2 text-[10px] text-slate-400 dark:text-slate-500">
+              Bilan généré par IA à partir des écrits de l'élève — les compétences orales
+              (écouter, parler) s'évaluent en classe. À croiser avec ton regard de
+              professeur.
+            </p>
+          </div>
+        )}
 
         {/* Rapports de mission */}
         {reports.length > 0 && (

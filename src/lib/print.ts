@@ -89,12 +89,74 @@ export interface PrintConv {
   messages: ChatMessage[];
 }
 
+// ---------------------------------------------------------------
+// Bilan de compétences (CECRL / cycle 4)
+// ---------------------------------------------------------------
+
+export interface EvalCompetence {
+  code: string;
+  niveau: string;
+  maitrise: number;
+  constat: string;
+  preuves: string[];
+}
+
+export interface EvalData {
+  niveau_global: string;
+  fiabilite: string;
+  competences: EvalCompetence[];
+  points_forts: string[];
+  axes_progres: string[];
+  conseil_eleve: string;
+}
+
+export const COMPETENCE_LABELS: Record<string, string> = {
+  reagir_dialoguer: "Réagir et dialoguer (interaction écrite)",
+  ecrire: "Écrire (production écrite)",
+  lire_comprendre: "Lire (compréhension de l'écrit)",
+  lexique: "Compétences linguistiques — lexique",
+  grammaire: "Compétences linguistiques — grammaire",
+  culture: "Découvrir les aspects culturels de la langue (monde hispanophone)",
+};
+
+export const MAITRISE_LABELS = [
+  "",
+  "Maîtrise insuffisante",
+  "Maîtrise fragile",
+  "Maîtrise satisfaisante",
+  "Très bonne maîtrise",
+];
+
+function evaluationSectionHtml(evaluation?: { created_at: string; data: EvalData }): string {
+  if (!evaluation) return "";
+  const d = evaluation.data;
+  const comps = Array.isArray(d.competences) ? d.competences : [];
+  const rows = comps
+    .map((c) => {
+      const m = Math.max(0, Math.min(4, Math.round(Number(c.maitrise)) || 0));
+      const preuvesArr = Array.isArray(c.preuves) ? c.preuves : [];
+      const preuves =
+        preuvesArr.length > 0
+          ? `<br><i>« ${preuvesArr.map(esc).join(" » · « ")} »</i>`
+          : "";
+      return `<tr><td>${esc(COMPETENCE_LABELS[c.code] ?? c.code)}</td><td><b>${esc(c.niveau)}</b></td><td>${m}/4 — ${esc(MAITRISE_LABELS[m] ?? "")}</td><td>${esc(c.constat ?? "")}${preuves}</td></tr>`;
+    })
+    .join("");
+  return `<h2>Bilan de compétences (CECRL · cycle 4) — ${frDate(evaluation.created_at)}</h2>
+  <p class="meta">Niveau global estimé : <b>${esc(d.niveau_global ?? "?")}</b> · Fiabilité : ${esc(d.fiabilite ?? "?")} · Bilan généré par IA à partir des écrits de l'élève ; les compétences orales s'évaluent en classe.</p>
+  <table><tr><th>Compétence</th><th>Niveau CECRL</th><th>Maîtrise (socle)</th><th>Constat et preuves</th></tr>${rows}</table>
+  <p><b>Points forts :</b> ${(Array.isArray(d.points_forts) ? d.points_forts : []).map(esc).join(" · ") || "—"}<br>
+  <b>Axes de progrès :</b> ${(Array.isArray(d.axes_progres) ? d.axes_progres : []).map(esc).join(" · ") || "—"}</p>
+  <p><b>Conseil à l'élève :</b> ${esc(d.conseil_eleve ?? "")}</p>`;
+}
+
 export function studentReportHtml(args: {
   studentName: string;
   className: string;
   progress?: PrintProgress;
   reports: PrintReport[];
   convs: PrintConv[];
+  evaluation?: { created_at: string; data: EvalData };
   printedAt?: Date;
 }): string {
   const { studentName, className, progress, reports, convs } = args;
@@ -153,6 +215,7 @@ export function studentReportHtml(args: {
   return `<h1>🦜 ¡Charlemos! — Fiche bilan</h1>
   <p class="meta">Élève : <b>${esc(studentName)}</b> · Classe : ${esc(className)} · Imprimé le ${printedAt}</p>
   <h2>Synthèse</h2>${synthese}
+  ${evaluationSectionHtml(args.evaluation)}
   <h2>Rapports de mission (${reports.length})</h2>${missions}
   <h2>Carnet de mots (${vocab.length})</h2>${carnet}
   <h2>Conversations</h2>${conversations}
