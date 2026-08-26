@@ -25,7 +25,7 @@ export function Header({ route }: { route: Route }) {
 
   return (
     <header className="sticky top-0 z-30 border-b border-orange-100 bg-white/80 backdrop-blur-md dark:border-slate-800 dark:bg-slate-950/80">
-      <div className="mx-auto flex h-14 max-w-6xl items-center gap-2 px-3 sm:px-4">
+      <div className="mx-auto flex h-14 max-w-6xl items-center gap-1 px-2 sm:gap-2 sm:px-4">
         {inChat ? (
           <button
             onClick={() => navigate({ name: "hub" })}
@@ -42,7 +42,7 @@ export function Header({ route }: { route: Route }) {
             title="Accueil"
           >
             <span className="text-2xl">🦜</span>
-            <span className="font-display text-lg font-extrabold tracking-tight text-transparent bg-gradient-to-r from-orange-500 via-rose-500 to-violet-600 bg-clip-text">
+            <span className="hidden font-display text-lg font-extrabold tracking-tight text-transparent bg-gradient-to-r from-orange-500 via-rose-500 to-violet-600 bg-clip-text sm:inline">
               ¡Charlemos!
             </span>
           </button>
@@ -67,7 +67,7 @@ export function Header({ route }: { route: Route }) {
         <div className="flex-1" />
 
         {!inChat && (
-          <nav className="mr-1 hidden items-center gap-1 sm:flex">
+          <nav className="mr-1 flex items-center gap-1">
             <NavButton
               active={route.name === "hub"}
               onClick={() => navigate({ name: "hub" })}
@@ -115,7 +115,7 @@ export function Header({ route }: { route: Route }) {
           onClick={() =>
             updateSettings({ theme: settings.theme === "dark" ? "light" : "dark" })
           }
-          className="rounded-xl p-2 text-slate-500 hover:bg-orange-100 dark:text-slate-400 dark:hover:bg-slate-800"
+          className="hidden rounded-xl p-2 text-slate-500 hover:bg-orange-100 sm:block dark:text-slate-400 dark:hover:bg-slate-800"
           title={settings.theme === "dark" ? "Mode clair" : "Mode sombre"}
         >
           {settings.theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
@@ -160,14 +160,15 @@ function NavButton({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-sm font-bold transition-colors ${
+      title={label}
+      className={`flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-bold transition-colors md:px-3 ${
         active
           ? "bg-slate-900 text-white dark:bg-white dark:text-slate-900"
           : "text-slate-600 hover:bg-orange-100 dark:text-slate-300 dark:hover:bg-slate-800"
       }`}
     >
       {icon}
-      {label}
+      <span className="hidden md:inline">{label}</span>
     </button>
   );
 }
