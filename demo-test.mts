@@ -315,6 +315,94 @@ function play(agentId: string, userMsgs: string[]): string[] {
   check("intrus : liste collée → choisir", r[6].includes("elige una sola"), r[6]);
 }
 
+// ---- 23) Langue : une réponse en français ne passe JAMAIS ----
+{
+  // Mot-clé partagé (« sandwich ») dans une phrase française → refusé
+  const r = play("mateo", [
+    "Léo",
+    "historia",
+    "Je mange un sandwich", //  français malgré « sandwich » → réorientation
+    "Como un sandwich", //      espagnol → avance
+    "je mange à 12h30", //      français malgré les chiffres → réorientation
+    "a las 12h30", //           espagnol → avance
+  ]);
+  check("langue : « Je mange un sandwich » refusé", r[2].includes("francés") && r[2].includes("Como una fruta"), r[2]);
+  check("langue : pas d'avance sur le français", !r[2].includes("A qué hora"), r[2]);
+  check("langue : « Como un sandwich » accepté ensuite", r[3].includes("A qué hora"), r[3]);
+  check("langue : « je mange à 12h30 » refusé malgré les chiffres", r[4].includes("francés"), r[4]);
+  check("langue : « a las 12h30 » accepté", r[5].includes("Canela"), r[5]);
+}
+
+// ---- 24) Langue : prénom en français / en anglais chez Mateo ----
+{
+  const r = play("mateo", ["je m'appelle Léa", "Me llamo Léa"]);
+  check("langue : « je m'appelle Léa » → réorientation + modèle", r[0].includes("francés") && r[0].includes("Me llamo"), r[0]);
+  check("langue : « Me llamo Léa » accepté ensuite", r[1].includes("asignatura"), r[1]);
+  const r2 = play("mateo", ["My name is Emma"]);
+  check("langue : « My name is Emma » → inglés", r2[0].includes("inglés"), r2[0]);
+  const r3 = play("mateo", ["1234"]);
+  check("langue : « 1234 » n'est pas un prénom → indice", r3[0].includes("Me llamo"), r3[0]);
+}
+
+// ---- 25) Langue : « J'écoute du rap » refusé malgré « rap » ----
+{
+  const r = play("lucia", ["Me gusta la música", "J'écoute du rap", "escucho rap"]);
+  check("langue : « J'écoute du rap » refusé", r[1].includes("francés") && r[1].includes("Escucho pop"), r[1]);
+  check("langue : « escucho rap » accepté ensuite", r[2].includes("chévere"), r[2]);
+}
+
+// ---- 26) Langue : « il y a Halloween » refusé chez Valeria ----
+{
+  const r = play("valeria", [
+    "No, no conozco México",
+    "il y a Halloween en France", // français malgré « Halloween » → réorientation
+    "Sí, hay una fiesta: Halloween",
+  ]);
+  check("langue : « il y a Halloween » refusé", r[1].includes("francés"), r[1]);
+  check("langue : « Sí, hay una fiesta » accepté ensuite", r[2].includes("mariposa"), r[2]);
+  const r2 = play("valeria", ["non"]);
+  check("langue : « non » → réorientation vers « No »", r2[0].includes("francés") && r2[0].includes("No, no conozco"), r2[0]);
+}
+
+// ---- 27) Langue : mission du Capitán (français puis anglais, score) ----
+{
+  const r = play("capitan", [
+    "1",
+    "Me llamo Léo y tengo 12 años",
+    "naranja",
+    "Yo tengo 12 años",
+    "C'est le Guernica", //        français → refusé, indice
+    "Es el Guernica", //           espagnol (2e essai → 1 pt)
+    "I like to play football", //  anglais → refusé, indice
+    "Me gusta jugar al fútbol", // espagnol (2e essai → 1 pt)
+    "la mochila",
+  ]);
+  check("langue : « C'est le Guernica » refusé", r[4].includes("francés") && !r[4].includes("[[etapa: 5/6]]"), r[4]);
+  check("langue : « Es el Guernica » accepté (2e essai)", r[5].includes("[[etapa: 5/6]]"), r[5]);
+  check("langue : « I like to play football » → inglés", r[6].includes("inglés"), r[6]);
+  check("langue : score final 10/12", r[8].includes("total=10/12"), r[8]);
+}
+
+// ---- 28) Langue : chez Chispa aussi ----
+{
+  const r = play("chispa", ["hola", "sí", "je suis étudiant", "soy estudiante"]);
+  check("chispa : « je suis étudiant » refusé", r[2].includes("francés") && !r[2].includes("Pregunta 2"), r[2]);
+  check("chispa : « soy estudiante » accepté (2e essai)", r[3].includes("Pregunta 2 de 3"), r[3]);
+}
+
+// ---- 29) Langue : tolérance et non-régressions ----
+{
+  // Un gallicisme isolé dans une phrase espagnole reste accepté
+  const r = play("capitan", ["1", "Me llamo Léo et tengo 12 años"]);
+  check("langue : un seul « et » dans une phrase espagnole toléré", r[1].includes("[[etapa: 2/6]]"), r[1]);
+  // « oui » seul reste un acquiescement poli (on repose le défi)
+  const r2 = play("capitan", ["1", "Me llamo Léo y tengo 12 años", "oui"]);
+  check("langue : « oui » seul → Seguimos", r2[2].includes("Seguimos"), r2[2]);
+  // Une réponse espagnole imparfaite suit le chemin normal de l'indice
+  const r3 = play("valeria", ["quiero tacos"]);
+  check("langue : espagnol hors-sujet → indice normal, sans « francés »", !r3[0].includes("francés"), r3[0]);
+}
+
 // ---- 22) Documents imprimables ----
 {
   const { studentReportHtml, classReportHtml } = await import("./src/lib/print");

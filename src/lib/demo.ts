@@ -9,6 +9,9 @@
 //   type de réponse en espagnol ; réponse à côté → le personnage donne un
 //   modèle (« Escribe: “Mi asignatura favorita es...” ») ; 2e essai raté →
 //   il montre la réponse et continue, sans bloquer ni compter de points.
+// - Dans les deux cas, une réponse écrite en FRANÇAIS (ou en anglais) n'est
+//   jamais acceptée, même si elle contient un mot-clé attendu : le personnage
+//   la refuse gentiment et redonne le modèle en espagnol.
 //
 // Limite connue : les conversations démo enregistrées AVANT cette version
 // peuvent se rejouer différemment ; il suffit de réinitialiser la
@@ -59,6 +62,101 @@ function isSmallTalk(raw: string): boolean {
     n,
   );
 }
+
+// ---------------------------------------------------------------
+// Détection de la langue de la réponse
+// ---------------------------------------------------------------
+// Une réponse écrite en français (ou en anglais) n'est JAMAIS acceptée,
+// même si elle contient un mot-clé attendu (« Je mange un sandwich »,
+// « J'écoute du rap », « il y a Halloween »...) : le personnage la refuse
+// gentiment, rappelle qu'ici on répond en espagnol et redonne le modèle.
+// Les listes ne contiennent que des mots impossibles en espagnol après
+// normalisation (« tres », « son », « la », « en »... sont exclus, communs
+// aux deux langues) pour ne jamais bloquer une vraie réponse espagnole.
+
+const FRENCH_ONLY = new Set([
+  // pronoms, déterminants, petits mots
+  "je", "il", "elle", "nous", "vous", "ils", "elles", "moi", "toi",
+  "mon", "ma", "ta", "ton", "une", "des", "du", "ce", "cet", "cette", "ces",
+  "qu", "quoi", "pourquoi", "comment", "quand", "et", "ne", "pas", "non",
+  "oui", "aussi", "avec", "chez", "beaucoup",
+  // être / avoir et verbes fréquents au présent
+  "est", "sont", "sommes", "etes", "suis", "ai", "aime", "aimes", "adore",
+  "adores", "deteste", "prefere", "preferes", "preferee", "mange", "manges",
+  "bois", "joue", "joues", "ecoute", "ecoutes", "regarde", "regardes",
+  "habite", "habites", "appelle", "appelles", "veux", "peux", "fais", "dois",
+  "sais", "connais", "comprends", "pense", "voudrais", "aimerais",
+  // école et vie quotidienne
+  "ans", "annee", "annees", "ecole", "college", "matiere", "matieres",
+  "cours", "professeur", "etudiant", "etudiante", "histoire", "geographie",
+  "mathematiques", "maths", "sciences", "physique", "chimie", "musique",
+  "dessin", "anglais", "allemand", "espagnol", "francais", "francaise",
+  "technologie", "sport", "chanson", "chansons", "semaine", "heure",
+  "heures", "midi", "gouter", "fromage", "pomme", "gateau", "gateaux",
+  "jus", "lait", "pain", "poulet", "frites", "viande", "poisson",
+  "chien", "chienne", "lapin", "oiseau", "tortue", "cheval", "souris",
+  "maison", "copain", "copains", "copine", "copines", "famille", "frere",
+  "soeur", "vacances", "jeux", "livre", "livres", "musee", "peinture",
+  "tableau", "football",
+  // pays (les formes espagnoles diffèrent toutes)
+  "france", "espagne", "italie", "angleterre", "allemagne", "bresil",
+  "grece", "maroc", "mexique", "perou",
+]);
+
+const ENGLISH_ONLY = new Set([
+  "the", "my", "your", "name", "is", "am", "are", "and", "like", "love",
+  "play", "listen", "watch", "have", "has", "dont", "cant", "what", "hello",
+  "hi", "yes", "food", "school", "favorite", "favourite", "because", "with",
+  "week", "eat", "years", "old", "friends", "game", "games", "music",
+  "football",
+]);
+
+/** Mots clairement espagnols : une vraie tentative, même imparfaite */
+const SPANISH_HINTS = new Set([
+  "me", "mi", "yo", "el", "los", "las", "es", "esta", "estas", "estan",
+  "estoy", "soy", "eres", "tengo", "tienes", "tiene", "tenemos", "gusta",
+  "gustan", "encanta", "encantan", "llamo", "llamas", "llama", "quiero",
+  "quieres", "prefiero", "prefieres", "escucho", "escuchas", "veo", "ves",
+  "juego", "juegas", "voy", "vas", "hay", "si", "hola", "gracias", "anos",
+  "muy", "mucho", "mucha", "muchos", "muchas", "tambien", "pero", "como",
+  "cual", "donde", "cuando", "porque", "con", "por", "para", "conozco",
+  "vivo", "vives", "favorito", "favorita", "espanol", "espanola", "comida",
+  "asignatura", "mascota", "fiesta", "musica", "futbol", "perro", "gato",
+  "madrid", "espana", "mexico", "colegio", "instituto", "recreo",
+  "bocadillo", "manana", "tarde", "noche", "nada", "todo", "al", "del",
+  "este", "ese", "esa", "aqui",
+]);
+
+/** "fr" si la réponse est écrite en français, "en" si anglais, null sinon */
+function detectForeign(raw: string): "fr" | "en" | null {
+  const tokens = normalize(raw).split(" ").filter(Boolean);
+  let fr = 0;
+  let en = 0;
+  let es = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (FRENCH_ONLY.has(t)) fr++;
+    if (ENGLISH_ONLY.has(t)) en++;
+    if (SPANISH_HINTS.has(t)) es++;
+    if (t.length === 1) {
+      // élisions françaises : « j'ai », « c'est », « m'appelle », « l'école »
+      if ("jcdlmnst".includes(t) && /^[aeiouh]/.test(tokens[i + 1] ?? "")) fr++;
+      if (t === "i") en++; // « I like... »
+    }
+  }
+  // Un gallicisme isolé dans une phrase espagnole reste toléré (« Me llamo
+  // Léo et tengo 12 años ») : on ne refuse que si le français domine, ou
+  // s'il n'y a aucun mot espagnol dans la réponse.
+  const wins = (score: number) => (score >= 2 ? score > es : score === 1 && es === 0);
+  if (wins(fr) && fr >= en) return "fr";
+  if (wins(en)) return "en";
+  return null;
+}
+
+const FOREIGN_NUDGE = {
+  fr: "¡Uy! ¡Eso es francés! 😅 Aquí respondemos EN ESPAÑOL. (Réécris ta réponse en espagnol — aide-toi du modèle ! 😉)",
+  en: "¡Uy! ¡Eso es inglés! 😅 Aquí respondemos EN ESPAÑOL. (Réécris ta réponse en espagnol — aide-toi du modèle ! 😉)",
+} as const;
 
 // ---------------------------------------------------------------
 // Moteur de « quête » : suite d'étapes avec vérification des réponses
@@ -137,7 +235,9 @@ function runQuest(quest: Quest, userMessages: string[]): string {
     // « no sé », « no entiendo »... : détresse, jamais une bonne réponse
     // (sauf étape d'introduction sans indice, où tout fait avancer)
     const helpless = isHelpless(raw) && step.hint !== "";
-    const passes = !helpless && step.check(raw);
+    // Réponse en français ou en anglais : jamais acceptée, on réoriente
+    const foreign = !helpless && step.hint !== "" ? detectForeign(raw) : null;
+    const passes = !helpless && !foreign && step.check(raw);
     // « ok », « merci »... après un succès : on repose le défi sans pénalité
     if (!passes && isSmallTalk(raw)) {
       reply = `¡Vale! 😊 Seguimos:\n\n${step.ask}`;
@@ -166,7 +266,7 @@ function runQuest(quest: Quest, userMessages: string[]): string {
       reply = [step.success, next].filter(Boolean).join("\n\n");
     } else if (attempts === 0) {
       attempts = 1;
-      reply = step.hint;
+      reply = foreign ? `${FOREIGN_NUDGE[foreign]}\n\n${step.hint}` : step.hint;
     } else {
       if (step.scored !== false) results.push(0);
       pos++;
@@ -401,7 +501,8 @@ const MATEO_QUEST: Quest = {
   steps: [
     {
       ask: "¡Hola! 👋 Soy Mateo, de Madrid. Tengo 13 años y estoy en 2º de ESO (es como la 4ème en Francia). ¿Y tú? ¿Cómo te llamas?",
-      check: (a) => !isHelpless(a) && !isSmallTalk(a),
+      // Un prénom contient au moins une lettre (« 1234 » n'est pas un prénom)
+      check: (a) => /[a-z]/.test(normalize(a)) && !isHelpless(a) && !isSmallTalk(a),
       hint: "¿Tu nombre? 😊 Escribe: « Me llamo ... ». ¡Inténtalo!",
       reveal: "No pasa nada. 😊 Yo digo: « Me llamo Mateo ». ¡Mucho gusto!",
       success: "",
