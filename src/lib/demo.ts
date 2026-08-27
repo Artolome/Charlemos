@@ -25,16 +25,34 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 // Analyse tolérante des réponses de l'élève
 // ---------------------------------------------------------------
 
-/** "¡NARANJA!" → "naranja" ; "está" → "esta" ; la ponctuation devient espace */
+/** "¡NARANJA!" → "naranja" ; "está" → "esta" ; la ponctuation devient espace.
+ *  - la ponctuation typographique (« l'histoire » tapé au téléphone avec ',
+ *    espaces insécables collées...) sépare les mots comme la ponctuation ASCII ;
+ *  - les emojis et symboles sont supprimés SANS couper le mot (« est🥰oy ») ;
+ *  - les lettres étirées sont repliées : voyelles → simple (« naranjaaa »),
+ *    consonnes → double (« sappellle » → « sappelle ») ;
+ *  - les lettres espacées pour le style (« N A R A N J A ») sont recollées. */
 function normalize(s: string): string {
   let out = "";
-  for (const ch of s.normalize("NFD").toLowerCase()) {
+  // NFKD : décompose aussi les lettres « fantaisie » (𝐣𝐞 → je), les
+  // ligatures (œ → oe) et les pleines chasses, en plus des accents.
+  for (const ch of s.normalize("NFKD").toLowerCase()) {
     const cp = ch.codePointAt(0) ?? 0;
     if (cp >= 0x0300 && cp <= 0x036f) continue; // accents décomposés
     if ((ch >= "a" && ch <= "z") || (ch >= "0" && ch <= "9")) out += ch;
-    else out += " ";
+    else if (cp < 128 || /[\p{P}\p{Z}]/u.test(ch)) out += " ";
+    // sinon : emoji ou symbole → ignoré, le mot reste entier
   }
-  return out.replace(/\s+/g, " ").trim();
+  out = out
+    .replace(/([aeiou])\1{2,}/g, "$1")
+    .replace(/([^aeiou\s])\1{2,}/g, "$1$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  const parts = out.split(" ");
+  if (parts.length >= 4 && parts.every((p) => p.length === 1)) {
+    return parts.join("");
+  }
+  return out;
 }
 
 /** La réponse contient-elle l'un de ces mots entiers ? (accents/majuscules ignorés) */
@@ -58,7 +76,7 @@ function isHelpless(raw: string): boolean {
 /** « ok », « merci », « 👍 »... : acquiescement poli, pas une réponse au défi */
 function isSmallTalk(raw: string): boolean {
   const n = normalize(raw);
-  return /^(ok(ay|i)?|d ?accord|merci( beaucoup)?|super|genial|cool|vale|gracias|si|oui|yes|jaja(ja)*|lol|mdr|bien|muy bien|bravo|top|guay|chevere|perfecto|entendido|vamos)$/.test(
+  return /^(ok(ay|i)?|d ?accord|merci( beaucoup)?|super|genial|cool|vale|gracias|si|oui|yes|jaja(ja)*|lol|mdr|bien|muy bien|bravo|top|guay|chevere|perfecto|entendido|vamos|hola+|buenas|buenos dias|buenas tardes|buenas noches|hey)$/.test(
     n,
   );
 }
@@ -75,79 +93,310 @@ function isSmallTalk(raw: string): boolean {
 // aux deux langues) pour ne jamais bloquer une vraie réponse espagnole.
 
 const FRENCH_ONLY = new Set([
+  // salutations et politesse
+  "bonjour", "bonsoir", "salut", "coucou", "revoir", "bienvenue", "merci",
+  "stp", "svp", "plait",
   // pronoms, déterminants, petits mots
-  "je", "il", "elle", "nous", "vous", "ils", "elles", "moi", "toi",
-  "mon", "ma", "ta", "ton", "une", "des", "du", "ce", "cet", "cette", "ces",
-  "qu", "quoi", "pourquoi", "comment", "quand", "et", "ne", "pas", "non",
-  "oui", "aussi", "avec", "chez", "beaucoup",
-  // être / avoir et verbes fréquents au présent
-  "est", "sont", "sommes", "etes", "suis", "ai", "aime", "aimes", "adore",
-  "adores", "deteste", "prefere", "preferes", "preferee", "mange", "manges",
-  "bois", "joue", "joues", "ecoute", "ecoutes", "regarde", "regardes",
-  "habite", "habites", "appelle", "appelles", "veux", "peux", "fais", "dois",
-  "sais", "connais", "comprends", "pense", "voudrais", "aimerais",
+  // (« par » est exclu : « un par de galletas » est de l'espagnol correct)
+  "je", "il", "elle", "on", "nous", "vous", "ils", "elles", "moi", "toi",
+  "mon", "ma", "ta", "ton", "sa", "une", "des", "du", "au", "aux",
+  "ce", "cet", "cette", "ces", "qu", "quoi", "pourquoi", "comment",
+  "quand", "quel", "quelle", "quels", "quelles", "qui", "ca", "cela",
+  "et", "ou", "ne", "pas", "non", "oui", "ouais", "nan", "bah", "ben",
+  "euh", "bof", "ouf", "aussi", "avec", "chez", "beaucoup", "mais",
+  "donc", "alors", "puis", "voila", "comme", "parce", "encore",
+  "toujours", "jamais", "rien", "tout", "tous", "toute", "toutes",
+  "meme", "vraiment", "trop", "plutot", "pareil", "ici", "bas", "chose",
+  "truc", "trucs", "vers", "peu", "pres", "pile", "aucun", "aucune",
+  "sans", "plein", "pleine", "surtout", "franchement", "carrement",
+  "idee", "idees", "dalle", "souvent", "parfois", "environ", "bientot",
+  "presque", "temps", "pour", "maintenant", "tard", "plus", "soule",
+  "barre",
+  // être / avoir et verbes fréquents
+  "est", "sont", "sommes", "etes", "suis", "ai", "etre", "avoir", "faire",
+  "aller", "aime", "aimes", "adore", "adores", "deteste", "prefere",
+  "preferes", "preferee", "mange", "manges", "manger", "bois", "joue",
+  "joues", "jouer", "ecoute", "ecoutes", "ecouter", "regarde", "regardes",
+  "regarder", "lire", "voir", "habite", "habites", "appelle", "appelles",
+  "veux", "veut", "peux", "peut", "fais", "fait", "faut", "dit", "dois",
+  "sais", "connais", "comprends", "pense", "crois", "parle", "parles",
+  "prends", "voudrais", "aimerais", "remplacer", "remplace", "mettre",
+  "dessiner", "hesiter", "hesite", "rire",
+  // élisions et abréviations SMS tapées sans apostrophe
+  // (« jaime » n'y est pas : Jaime est un prénom espagnol courant)
+  "jai", "jadore", "jecoute", "jhabite", "jregarde", "jsuis",
+  "jvais", "jveux", "jjoue", "jfais", "jmange", "jbois", "jsais",
+  "jpense", "jcrois", "jprefere", "cest", "sappelle", "mappelle",
+  "jemappelle", "jmappelle", "aujourdhui", "jm", "chui", "chuis", "chai",
+  "chais", "pk", "pcq", "bcp", "jpp", "osef", "oklm", "relou", "chelou",
+  "jkiffe", "jem", "jador", "jsui", "cetait", "tro", "trankil",
   // école et vie quotidienne
-  "ans", "annee", "annees", "ecole", "college", "matiere", "matieres",
-  "cours", "professeur", "etudiant", "etudiante", "histoire", "geographie",
-  "mathematiques", "maths", "sciences", "physique", "chimie", "musique",
-  "dessin", "anglais", "allemand", "espagnol", "francais", "francaise",
-  "technologie", "sport", "chanson", "chansons", "semaine", "heure",
-  "heures", "midi", "gouter", "fromage", "pomme", "gateau", "gateaux",
-  "jus", "lait", "pain", "poulet", "frites", "viande", "poisson",
-  "chien", "chienne", "lapin", "oiseau", "tortue", "cheval", "souris",
-  "maison", "copain", "copains", "copine", "copines", "famille", "frere",
-  "soeur", "vacances", "jeux", "livre", "livres", "musee", "peinture",
-  "tableau", "football",
+  "ans", "annee", "annees", "ecole", "college", "classe", "cinquieme",
+  "cantine", "recre", "devoirs", "matiere", "matieres", "cours",
+  "professeur", "prof", "eleve", "etudiant", "etudiante", "nom", "prenom",
+  "reponse", "question", "histoire", "geographie", "geo", "mathematiques",
+  "maths", "sciences", "physique", "chimie", "musique", "dessin",
+  "anglais", "allemand", "espagnol", "francais", "francaise",
+  "technologie", "sport", "gym", "svt", "eps", "arts", "plastiques",
+  "escalade",
+  "permanent", "temporaire", "chanson", "chansons", "semaine", "heure",
+  "heures", "midi", "minuit", "demi", "demie", "aujourd", "hui",
+  "demain", "hier", "matin", "matinee", "grasse", "soir", "jour",
+  "jours", "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+  "dimanche",
+  // nourriture (« madeleine » au singulier est épargné : c'est un prénom)
+  "gouter", "faim", "soif", "fromage", "pomme", "gateau", "gateaux",
+  "jus", "lait", "pain", "poulet", "frites", "viande", "poisson", "eau",
+  "banane", "orange", "fraise", "poire", "yaourt", "bonbon", "bonbons",
+  "pates", "compote", "chocolat", "madeleines", "raclette", "gratin",
+  "tartine", "tartines", "gaufre", "gaufres", "dej",
+  // animaux, famille, loisirs, sentiments
+  // (pas de mots qui sont aussi des prénoms ou noms de famille réels :
+  //  Rose, Fleur, Blanche, Violette, Petit, Blanc... restent acceptés)
+  "chien", "chienne", "chiens", "chat", "chats", "chaton", "chiot",
+  "lapin", "oiseau", "tortue", "cheval", "souris", "perroquet", "furet",
+  "poney", "cochon", "dinde", "mignon", "maison", "copain", "copains",
+  "copine", "copines", "potes", "cousin", "cousins", "cousine",
+  "cousines", "famille", "frere", "soeur", "mere", "pere", "parents",
+  "vacances", "balade", "foret", "console", "jeux", "livre", "livres",
+  "musee", "peinture", "peintre", "tableau", "guerre", "bombardement",
+  "paix", "mort", "souffrance", "couleur", "surprise", "joie", "peur",
+  "content", "contente", "heureux", "heureuse", "stresse", "stressee",
+  "fatigue", "fatiguee", "mechant", "mechante", "degoute", "creve",
+  "tranquille", "flemme", "sieste", "dodo", "flippant", "magnifique",
+  "douleur", "tristesse", "colere", "fete", "foraine", "perruche",
+  "bizarre", "intrus",
+  "football", "foot", "basket", "natation", "danse", "velo", "piscine",
+  "plage", "trottinette", "lecture", "equitation", "coreen", "coreenne",
+  // couleurs et nombres (formes espagnoles toutes différentes ;
+  // « verte » est épargné : c'est l'espagnol « ver+te », Espero verte)
+  "bleu", "bleue", "rouge", "vert", "jaune", "noir", "noire",
+  "violet",
+  "deux", "trois", "quatre", "cinq", "six", "sept", "huit", "neuf", "dix",
+  "onze", "douze", "treize", "quatorze", "quinze", "seize", "vingt",
+  // adjectifs courants
+  "petite", "grand", "bon", "bonne", "beau", "belle", "joli", "jolie",
+  "facile", "difficile",
   // pays (les formes espagnoles diffèrent toutes)
   "france", "espagne", "italie", "angleterre", "allemagne", "bresil",
-  "grece", "maroc", "mexique", "perou",
+  "grece", "maroc", "mexique", "perou", "norvege", "suisse", "belgique",
+  "tunisie", "algerie", "etats", "unis", "chine", "coree", "thailande",
+  "russie", "australie", "argentine", "colombie", "inde", "irlande",
 ]);
 
+// (« has » est exclu : « ¿has comido? » est de l'espagnol correct ;
+//  « america » aussi : « América » est un mot espagnol valide)
 const ENGLISH_ONLY = new Set([
-  "the", "my", "your", "name", "is", "am", "are", "and", "like", "love",
-  "play", "listen", "watch", "have", "has", "dont", "cant", "what", "hello",
-  "hi", "yes", "food", "school", "favorite", "favourite", "because", "with",
-  "week", "eat", "years", "old", "friends", "game", "games", "music",
-  "football",
+  "the", "my", "your", "name", "is", "am", "are", "was", "were", "and",
+  "not", "of", "or", "an", "at", "by", "for", "from", "about", "some",
+  "just", "you", "she", "we", "they", "it", "im", "its", "this", "that",
+  "there", "here", "his", "her", "him", "like", "love", "play",
+  "playing", "listen", "watch", "watching", "have", "dont", "cant",
+  "didnt", "doesnt", "isnt", "want", "can", "must", "say", "know",
+  "speak", "eat", "go", "going", "gonna", "wanna", "been", "never",
+  "turned", "sleeping", "chilling", "drawing", "what", "hello", "hi",
+  "yes", "please", "thanks", "thank", "dunno", "maybe", "same",
+  "nothing", "much", "mostly", "obviously", "almost", "around",
+  "somewhere", "everyday", "food", "lunch", "lunchtime", "noon",
+  "break", "snack", "crisps", "cookies", "candy", "sweets", "juice",
+  "apple", "chicken", "nuggets", "pancakes", "hot", "school", "class",
+  "history", "geography", "science", "favorite", "favourite", "because",
+  "with", "week", "weekend", "really", "very", "too", "all", "better",
+  "than", "after", "time", "half", "past", "good", "bad", "happy",
+  "sad", "tired", "bored", "excited", "scared", "angry", "morning",
+  "years", "old", "eleven", "twelve", "thirteen", "friend", "friends",
+  "brother", "sister", "grandma", "called", "home", "dog", "dogs",
+  "cat", "cats", "bunny", "game", "games", "videogames", "music",
+  "songs", "movies", "painting", "war", "clue", "football", "soccer",
+  "basketball", "swimming", "spanish", "french", "english", "bruh",
+  "nah", "bro", "orange", "purple", "blue", "green", "yellow", "black",
+  "white", "pink", "brown", "six", "japan", "spain", "england",
+  "germany", "italy", "monday", "tuesday", "wednesday", "thursday",
+  "friday", "saturday", "sunday",
+  "to", "in", "be", "one", "two", "seven", "who", "knows", "cares",
+  "whatever", "nope", "nearly", "next", "month", "midday", "clock",
+  "math", "sleep", "homework", "reading", "shows", "stuff", "duh",
+  "got", "goldfish", "turtle", "turtles", "mainly", "everything",
+  "tbh", "cheese", "fried", "rice", "peanut", "butter", "fine",
+  "hungry", "sleepy", "stressed", "kinda", "little", "nervous",
+  "united", "states", "day", "means", "temporary", "wrong", "verb",
+  "bombing", "boring", "cartoons", "fries", "live", "visited",
+  "cookie", "on", "only", "do", "hate", "so", "way", "bit", "neither",
+  "someday", "hopefully", "soon", "great", "awesome", "feeling",
+  "doing", "call", "calls", "colors", "people", "dying", "korea",
+  "brazil", "greece", "turkey", "ngl", "idc",
 ]);
 
 /** Mots clairement espagnols : une vraie tentative, même imparfaite */
 const SPANISH_HINTS = new Set([
-  "me", "mi", "yo", "el", "los", "las", "es", "esta", "estas", "estan",
-  "estoy", "soy", "eres", "tengo", "tienes", "tiene", "tenemos", "gusta",
-  "gustan", "encanta", "encantan", "llamo", "llamas", "llama", "quiero",
-  "quieres", "prefiero", "prefieres", "escucho", "escuchas", "veo", "ves",
-  "juego", "juegas", "voy", "vas", "hay", "si", "hola", "gracias", "anos",
-  "muy", "mucho", "mucha", "muchos", "muchas", "tambien", "pero", "como",
-  "cual", "donde", "cuando", "porque", "con", "por", "para", "conozco",
-  "vivo", "vives", "favorito", "favorita", "espanol", "espanola", "comida",
-  "asignatura", "mascota", "fiesta", "musica", "futbol", "perro", "gato",
-  "madrid", "espana", "mexico", "colegio", "instituto", "recreo",
-  "bocadillo", "manana", "tarde", "noche", "nada", "todo", "al", "del",
-  "este", "ese", "esa", "aqui",
+  "me", "mi", "mis", "yo", "el", "los", "las", "es", "esta", "estas",
+  "estan", "estoy", "soy", "eres", "tengo", "tienes", "tiene", "tenemos",
+  "gusta", "gustan", "encanta", "encantan", "llamo", "llamas", "llama",
+  "quiero", "quieres", "prefiero", "prefieres", "escucho", "escuchas",
+  "veo", "ves", "juego", "juegas", "voy", "vas", "hay", "si", "hola",
+  "buenas", "buenos", "dias", "gracias", "anos", "ano", "muy", "mucho",
+  "mucha", "muchos", "muchas", "gusto", "tambien", "pero", "como", "cual",
+  "donde", "cuando", "porque", "con", "por", "para", "conozco", "vivo",
+  "vives", "puedo", "puedes", "hablo", "hablas", "hablar", "entiendo",
+  "comprendo", "comer", "bebo", "tomo", "desayuno", "meriendo",
+  "merienda", "ceno", "cena", "jugar", "leer", "leo", "ver", "escuchar",
+  "cantar", "bailar", "gustaria", "quisiera", "doy", "pongo", "canto",
+  "digo", "hago", "nado", "comido", "jugado", "visto", "representa",
+  "ser", "estar", "bailo", "dibujo", "pinto", "trabajo", "duermo",
+  "visito", "monto", "espero",
+  "favorito", "favorita", "espanol", "espanola", "comida", "asignatura",
+  "mascota", "fiesta", "musica", "cancion", "canciones", "futbol",
+  "baloncesto", "deporte", "videojuegos", "juegos", "perro", "gato",
+  "loro", "animales", "mariposa", "amigo", "amiga", "amigos", "amigas",
+  "casa", "clase", "libro", "cuadro", "pintor", "museo", "abuela",
+  "llave", "madrid", "espana", "mexico", "colegio", "instituto",
+  "recreo", "bocadillo", "manana", "tarde", "noche", "hoy", "nada",
+  "todo", "al", "del", "este", "ese", "esa", "aqui", "naranja", "azul",
+  "rojo", "verde", "amarillo", "negro", "blanco", "rosa", "morado",
+  "color", "pequeno", "pequena", "pronto", "tiempo", "deberes",
+  "vacaciones", "conejo", "sabado", "domingo", "lunes", "martes",
+  "miercoles", "jueves", "viernes", "quesadillas", "enchiladas",
+  "cesta",
+  "historia", "matematicas", "ingles", "ciencias", "lengua", "frances",
+  // (« chocolate » n'y est pas : c'est aussi le mot anglais)
+  "galletas", "fruta", "yogur", "cereales", "zumo", "queso", "ensalada",
+  "sopa", "tacos", "patatas", "pescado", "carne", "pollo", "arroz",
+  "hamburguesa", "agua", "leche", "pan", "caliente", "palomitas",
+  "practico", "escribo", "aburro", "aburrido", "divertido", "divertida",
+  "rollo",
+  "dos", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez",
+  "doce", "trece", "media", "cuarto", "dia", "mochila",
+  "manzana", "platano", "una", "uno", "visitar", "peru", "italia",
+  "francia",
 ]);
 
-/** "fr" si la réponse est écrite en français, "en" si anglais, null sinon */
-function detectForeign(raw: string): "fr" | "en" | null {
-  const tokens = normalize(raw).split(" ").filter(Boolean);
+/** Titres de jeux, séries, artistes et emprunts lexicaux cités tels quels
+ *  par les élèves : neutralisés avant le comptage pour que leur « the » /
+ *  « of » / « bad »... ne fasse pas passer « juego a call of duty » ou
+ *  « escucho bad bunny » pour de l'anglais. Les plus longs d'abord. */
+const NEUTRAL_PHRASES = [
+  "the legend of zelda", "legend of zelda", "call of duty",
+  "clash of clans", "clash royale", "the walking dead", "the weeknd",
+  "the last of us", "the sims", "stranger things", "wednesday",
+  "mario kart", "brawl stars", "animal crossing", "grand theft auto",
+  "star wars", "harry potter", "bad bunny", "black pink", "angry birds",
+  "candy crush", "one piece", "just dance", "pokemon go",
+  "league of legends", "la play", "hot dogs", "hot dog",
+  "pain au chocolat",
+];
+
+/** Verbes français agglutinés sans espace (« jaimelefoot », « cestbon »).
+ *  Les préfixes sont bordés pour épargner les mots et prénoms espagnols :
+ *  « jai » exige une suite française (Jairo passe), « cest » refuse le
+ *  a de « cesta ». */
+const GLUED_FR =
+  /^(?:jai(?=\d|pas|un|une|la|le|les|des|deux|douze|faim|soif)|jaime(?=[a-z]{2})|je(?:joue|suis|regarde|vais|veux|bois|mange|prefere|deteste|pense|crois|sais|fais|adore)|jadore|jsuis|jvais|jveux|jjoue|jmange|jbois|jecoute|jregarde|jhabite|jfais|jemappelle|jmappelle|mappelle|sappelle|cest(?!a))/;
+
+/** Anglais aggloméré (« ilikefootball », « iplayfortnite »...) */
+const GLUED_EN = /^(?:ilike|ilove|iam|ihave|iwant|iplay|iwatch|ieat|igo|myname)/;
+
+/** Mots qui révèlent une CHARPENTE de phrase française (sujet + verbe) :
+ *  leur présence l'emporte sur les noms espagnols qui suivent
+ *  (« je bois un zumo de naranja » reste une phrase française). */
+const STRONG_FR = new Set([
+  "je", "jai", "jadore", "jsuis", "jsui", "jvais", "jveux", "jmange",
+  "jbois", "jkiffe", "jem", "jador", "chui", "chuis", "cest", "cetait",
+  "jemappelle", "jmappelle", "mappelle", "sappelle", "jm",
+]);
+
+/** "fr" si la réponse est écrite en français, "en" si anglais, null sinon.
+ *  (Exporté pour les tests : demo-test.mts sonde le classifieur directement.) */
+export function detectForeign(raw: string): "fr" | "en" | null {
+  let text = ` ${normalize(raw)} `;
+  for (const phrase of NEUTRAL_PHRASES) text = text.split(` ${phrase} `).join(" ");
+  const tokens = text.split(" ").filter(Boolean);
   let fr = 0;
   let en = 0;
   let es = 0;
+  let leHits = 0;
+  let strongFr = false;
+  let strongEn = false;
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
+    const prev = tokens[i - 1] ?? "";
+    const next = tokens[i + 1] ?? "";
     if (FRENCH_ONLY.has(t)) fr++;
+    else if (t.length >= 5 && GLUED_FR.test(t)) {
+      fr++;
+      strongFr = true; // « jaimelefoot », « jai12ans »
+    } else if (
+      // élision agglutinée : « lhistoire », « despagnol », « lecole »...
+      // (« jaime »/« jaimes » exclus : Jaime est un prénom espagnol)
+      t.length >= 4 &&
+      t !== "jaime" &&
+      t !== "jaimes" &&
+      "jcdlmnst".includes(t[0]) &&
+      FRENCH_ONLY.has(t.slice(1))
+    ) {
+      fr++;
+    }
+    if (STRONG_FR.has(t)) strongFr = true;
+    // « jaime » seul ou après llamo/soy est le prénom espagnol Jaime ;
+    // suivi d'un article ou d'un adverbe, c'est « j'aime » sans apostrophe
+    if (
+      t === "jaime" &&
+      !["llamo", "llama", "soy"].includes(prev) &&
+      (FRENCH_ONLY.has(next) ||
+        ["el", "la", "los", "las", "bien"].includes(next))
+    ) {
+      fr++;
+      strongFr = true;
+    }
+    // charpente existentielle « il y a... »
+    if (t === "il" && next === "y") strongFr = true;
     if (ENGLISH_ONLY.has(t)) en++;
+    else if (t.length >= 5 && GLUED_EN.test(t)) {
+      en++;
+      strongEn = true; // « ilikefootball »
+    }
+    if (t === "im") strongEn = true;
     if (SPANISH_HINTS.has(t)) es++;
     if (t.length === 1) {
-      // élisions françaises : « j'ai », « c'est », « m'appelle », « l'école »
-      if ("jcdlmnst".includes(t) && /^[aeiouh]/.test(tokens[i + 1] ?? "")) fr++;
+      // élisions françaises : « c'est », « m'appelle », « l'école » ;
+      // seul « j' » (jamais espagnol) est un marqueur structurel fort
+      if ("jcdlmnst".includes(t) && /^[aeiouh]/.test(next)) {
+        fr++;
+        if (t === "j") strongFr = true;
+      }
+      // SMS « g » = j'ai, seulement en tête de message (« g faim ») —
+      // jamais après un nom (« karol g » est un nom d'artiste)
+      if (t === "g" && i === 0 && tokens.length >= 2) {
+        fr++;
+        strongFr = true;
+      }
       if (t === "i") en++; // « I like... »
     }
+    // âge collé « 12ans », « g12ans » ou fautif « 12 an » / anglais « 12years »
+    // (simple point fr : « tengo 12ans » garde sa charpente espagnole)
+    if (/^g?\d{1,2}ans?$/.test(t)) fr++;
+    if (t === "an" && /^\d+$/.test(prev)) fr++;
+    if (/^\d{1,2}years?$/.test(t)) en++;
+    // « tu es... », « tu as... » : conjugaison française — simple point fr,
+    // car « tú es de México » est aussi une faute d'apprenant en espagnol
+    if (t === "tu" && (next === "es" || next === "as")) fr++;
+    // Article français devant un nom qui n'est pas espagnol (« le japon »,
+    // « les series ») — comptés seulement si la réponse ne contient par
+    // ailleurs AUCUN mot espagnol, pour épargner le pronom espagnol
+    // « le/les » (« le doy galletas », « les canto canciones »).
+    if ((t === "le" || t === "les") && next.length >= 3 && !SPANISH_HINTS.has(next)) {
+      leHits++;
+    }
   }
-  // Un gallicisme isolé dans une phrase espagnole reste toléré (« Me llamo
-  // Léo et tengo 12 años ») : on ne refuse que si le français domine, ou
-  // s'il n'y a aucun mot espagnol dans la réponse.
-  const wins = (score: number) => (score >= 2 ? score > es : score === 1 && es === 0);
+  if (es === 0) fr += leHits;
+  // Une charpente de phrase clairement française ou anglaise l'emporte,
+  // même noyée sous des noms espagnols (« je joue a los videojuegos »).
+  if (strongFr && fr >= en) return "fr";
+  if (strongEn && en >= fr) return "en";
+  // Sinon : un gallicisme isolé dans une phrase espagnole reste toléré
+  // (« Me llamo Léo et tengo 12 años ») ; à partir de deux mots étrangers,
+  // l'égalité avec les mots espagnols ne suffit plus (« mi perro est
+  // mignon » est refusé, son prédicat est français).
+  const wins = (score: number) => (score >= 2 ? score >= es : score === 1 && es === 0);
   if (wins(fr) && fr >= en) return "fr";
   if (wins(en)) return "en";
   return null;
