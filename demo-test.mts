@@ -53,7 +53,7 @@ function play(agentId: string, userMsgs: string[]): string[] {
 // ---- 2) Mission avec erreurs, indices et réponses données ----
 {
   const r = play("capitan", [
-    "sorpresa", //                     → étape 1
+    "adelante", //                     → étape 1 (mission 1 par défaut)
     "je m'appelle Léo", //             mauvais → indice (pas d'etapa)
     "Me llamo Léo y tengo 12 años", // bon (2e essai → 1 pt) → étape 2
     "azul", //                         mauvais → indice
@@ -73,7 +73,7 @@ function play(agentId: string, userMsgs: string[]): string[] {
   check("mission erreurs : informe total=7/12", r[10].includes("total=7/12"), r[10]);
   check("mission erreurs : insignia Detective", r[10].includes("Detective en Formación"), r[10]);
   check("mission erreurs : consejo « Revois »", r[10].includes("Revois les réponses"));
-  check("mission erreurs : relance → étape 1", r[11].includes("[[etapa: 1/6]]"));
+  check("mission erreurs : relance → mission 2, étape 1", r[11].includes("[[etapa: 1/6]]") && r[11].includes("cuadro desaparecido"), r[11]);
 }
 
 // ---- 3) Mini-reto de Chispa ----
@@ -121,7 +121,7 @@ function play(agentId: string, userMsgs: string[]): string[] {
   check("mateo : avance vers l'heure", r[4].includes("A qué hora"), r[4]);
   check("mateo : avance vers la mascota", r[5].includes("Canela"), r[5]);
   check("mateo : fin du dialogue", r[6].includes("Hasta luego"), r[6]);
-  check("mateo : relance → question du prénom", r[7].includes("Cómo te llamas"), r[7]);
+  check("mateo : relance → conversation 2", r[7].includes("Hola otra vez"), r[7]);
 }
 
 // ---- 5bis) Mateo : « ok » n'est pas un prénom ----
@@ -145,7 +145,7 @@ function play(agentId: string, userMsgs: string[]): string[] {
   check("lucía : préférence → Kiwi", r[2].includes("Kiwi"), r[2]);
   check("lucía : mascota → fin de semana", r[3].includes("fin de semana"), r[3]);
   check("lucía : week-end → au revoir", r[4].includes("Kiwi dice"), r[4]);
-  check("lucía : relance → question des goûts", r[5].includes("Qué te gusta a ti"), r[5]);
+  check("lucía : relance → conversation 2", r[5].includes("chévere verte otra vez"), r[5]);
 }
 
 // ---- 5quater) Diego : hésitation bonito o extraño ----
@@ -869,6 +869,134 @@ function play(agentId: string, userMsgs: string[]): string[] {
     .filter(([t, e]) => detectForeign(t) !== e)
     .map(([t, e]) => `« ${t} » attendu=${e ?? "accepté"} obtenu=${detectForeign(t) ?? "accepté"}`);
   check(`détecteur de langue : table de ${table.length} réponses d'élèves`, bad.length === 0, bad.join(" ; "));
+}
+
+// ---- 31) Parcours complets guidés par les suggestions 💡 ----
+// Invariant : à chaque étape, la 1re suggestion proposée par l'application
+// doit être ACCEPTÉE par le moteur — jamais d'indice, de « c'est du
+// français », d'hésitation ni de « Seguimos » en réponse à une suggestion.
+{
+  const { demoSuggestions } = await import("./src/lib/demo");
+  const REFUS = ["Inténtalo", "Réessaie", "Aquí respondemos EN ESPAÑOL", "elige una sola", "Seguimos:", "esa es MI pregunta"];
+  function drive(agentId: string, script: ("SUG" | string)[]): string[] {
+    const agent = agentById(agentId);
+    const history: ChatMessage[] = [
+      { id: "s", role: "assistant", content: agent.starter, ts: 0 },
+    ];
+    const replies: string[] = [];
+    for (const entry of script) {
+      const msg = entry === "SUG" ? demoSuggestions(agentId, history)[0] : entry;
+      history.push({ id: "u" + replies.length, role: "user", content: msg, ts: 0 });
+      const r = demoReplyFor(agent, history);
+      history.push({ id: "a" + replies.length, role: "assistant", content: r, ts: 0 });
+      replies.push(r);
+      if (entry === "SUG") {
+        const refus = REFUS.find((f) => r.includes(f));
+        check(
+          `suggestion acceptée [${agentId}] « ${msg} »`,
+          !refus,
+          refus ? `réponse contient « ${refus} » : ${r.slice(0, 160)}` : "",
+        );
+      }
+    }
+    return replies;
+  }
+
+  // Capitán : les 3 missions, choisies par numéro, finies sans faute
+  const rc = drive("capitan", [
+    "1", "SUG", "SUG", "SUG", "SUG", "SUG", "SUG",
+    "2", "SUG", "SUG", "SUG", "SUG", "SUG", "SUG",
+    "3", "SUG", "SUG", "SUG", "SUG", "SUG", "SUG",
+  ]);
+  check("mission 1 finie (informe 12/12)", rc[6].includes("[[informe: total=12/12"), rc[6]);
+  check("mission 2 : « El cuadro desaparecido » choisie par « 2 »", rc[7].includes("cuadro desaparecido"), rc[7]);
+  check("mission 2 finie (informe 12/12)", rc[13].includes("[[informe: total=12/12"), rc[13]);
+  check("mission 3 : « sorpresa » choisie par « 3 »", rc[14].includes("sorpresa"), rc[14]);
+  check("mission 3 finie (informe 12/12)", rc[20].includes("[[informe: total=12/12"), rc[20]);
+
+  // Chispa : les 3 retos enchaînés à la relance
+  const rq = drive("chispa", [
+    "hola", "SUG", "SUG", "SUG", "SUG",
+    "otro reto", "SUG", "SUG", "SUG", "SUG",
+    "otro", "SUG", "SUG", "SUG", "SUG",
+  ]);
+  check("reto 1 fini (Puntuación 3/3)", rq[4].includes("Puntuación:") && rq[4].includes("3 sobre 3"), rq[4]);
+  check("reto 2 (gustar) proposé à la relance", rq[5].toLowerCase().includes("gustar"), rq[5]);
+  check("reto 2 fini (Puntuación)", rq[9].includes("Puntuación:"), rq[9]);
+  check("reto 3 (la hora) proposé ensuite", /hora|horloge|reloj|heure/i.test(rq[10]), rq[10]);
+  check("reto 3 fini (Puntuación)", rq[14].includes("Puntuación:"), rq[14]);
+
+  // Correspondants : conversation 1 puis conversation 2 à la relance
+  for (const id of ["mateo", "valeria", "diego", "lucia"]) {
+    const rr = drive(id, ["SUG", "SUG", "SUG", "SUG", "SUG", "hola de nuevo", "SUG", "SUG", "SUG", "SUG", "SUG"]);
+    check(`${id} : les 2 conversations se déroulent jusqu'au bout`, rr.length === 11, "");
+  }
+}
+
+// ---- 32) Mémoire du prénom ----
+{
+  const r = play("mateo", ["Me llamo Léa", "historia"]);
+  check("nombre : « ¡Genial, Léa! » après la présentation", r[0].includes("¡Genial, Léa!"), r[0]);
+  const r2 = play("mateo", ["hola hola ¿qué tal?"]);
+  check("nombre : pas de faux prénom sur une réponse sans nom", !r2[0].includes("¡Genial, ") || r2[0].includes("¡Genial!"), r2[0]);
+}
+
+// ---- 33) Réactions différenciées ----
+{
+  const { demoSuggestions } = await import("./src/lib/demo");
+  const agent = agentById("capitan");
+  const history: ChatMessage[] = [{ id: "s", role: "assistant", content: agent.starter, ts: 0 }];
+  const msgs = ["2", "SUG", "SUG", "SUG", "SUG", "Desayuno churros con chocolate"];
+  let last = "";
+  for (const entry of msgs) {
+    const msg = entry === "SUG" ? demoSuggestions("capitan", history)[0] : entry;
+    history.push({ id: "u", role: "user", content: msg, ts: 0 });
+    last = demoReplyFor(agent, history);
+    history.push({ id: "a", role: "assistant", content: last, ts: 0 });
+  }
+  check("réaction churros : réponse spéciale du marinero", last.includes("desayunas como en España"), last);
+}
+
+// ---- 34) Astuces correctives sur bonnes réponses imparfaites ----
+{
+  const r = play("capitan", ["1", "Me llamo Léo y soy 12 años"]);
+  check("astuce : « soy 12 años » accepté MAIS corrigé", r[1].includes("[[etapa: 2/6]]") && r[1].includes("[[astuce: Pour l'âge"), r[1]);
+  const r2 = play("lucia", ["me gusta los videojuegos"]);
+  check("astuce : « me gusta los » → gustan", r2[0].includes("[[astuce: Au pluriel"), r2[0]);
+}
+
+// ---- 35) Aides par étape : traduction, vocabulaire, suggestions ----
+{
+  const { demoTranslation, demoVocab, demoSuggestions } = await import("./src/lib/demo");
+  const mateo = agentById("mateo");
+  const FALLBACK = "Traduction indisponible";
+  check("traduction : accueil de Mateo traduit", !demoTranslation(mateo.starter).includes(FALLBACK), demoTranslation(mateo.starter));
+  const r = play("mateo", ["Me llamo Léa"]);
+  const t = demoTranslation(r[0]);
+  check("traduction : message composé (prénom + question suivante)", t.includes("Génial, Léa") && !t.includes(FALLBACK), t);
+  const r2 = play("mateo", ["Léo", "les maths"]);
+  const t2 = demoTranslation(r2[1]);
+  check("traduction : réorientation langue + indice traduits", !t2.includes(FALLBACK), t2);
+  const rFin = play("capitan", ["1", "Me llamo Léo y tengo 12 años", "naranja", "Yo tengo 12 años", "el Guernica", "Me gusta leer", "la mochila"]);
+  check("traduction : rapport final traduit", !demoTranslation(rFin[6]).includes(FALLBACK), demoTranslation(rFin[6]));
+  check("vocabulaire : spécifique à l'étape (≠ générique)", JSON.stringify(demoVocab("mateo", mateo.starter)) !== JSON.stringify(demoVocab("mateo")), "");
+  const hist: ChatMessage[] = [{ id: "s", role: "assistant", content: mateo.starter, ts: 0 }];
+  check("suggestions : spécifiques à la question posée", demoSuggestions("mateo", hist)[0] !== demoSuggestions("mateo")[0], demoSuggestions("mateo", hist).join(" | "));
+}
+
+// ---- 36) Correctifs de la vérification adversariale ----
+{
+  // « Diego Rivera » n'est plus accepté comme peintre de Las Meninas
+  const r = play("capitan", ["2", "Diego Rivera", "Es Velázquez"]);
+  check("m2 : « Diego Rivera » → indice, pas de points", r[1].includes("Inténtalo") && !r[1].includes("[[etapa: 2/6]]"), r[1]);
+  check("m2 : « Es Velázquez » accepté ensuite", r[2].includes("[[etapa: 2/6]]"), r[2]);
+  // « bien » seul répond bien à « ¿Cómo estás? » en conversation 2 de Lucía
+  const r2 = play("lucia", [
+    "me gusta la musica", "escucho rap", "prefiero las series", "tengo un gato", "voy a jugar",
+    "hola otra vez", //  → conversation 2
+    "bien", //           réponse naturelle à ¿Cómo estás? → avance
+  ]);
+  check("lucía conv2 : « bien » accepté à ¿Cómo estás?", !r2[6].includes("Seguimos"), r2[6]);
 }
 
 // ---- 22) Documents imprimables ----

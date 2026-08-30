@@ -359,7 +359,7 @@ export async function translateMessage(
   settings: Settings,
   text: string,
 ): Promise<string> {
-  if (settings.demoMode) return demoTranslation();
+  if (settings.demoMode) return demoTranslation(text);
   const clean = parseAssistantContent(text).text;
   if (supabaseEnabled) {
     return proxyQuick({ op: "translate", text: clean, model: settings.model });
@@ -377,7 +377,7 @@ export async function extractVocab(
   text: string,
   level: LevelChoice,
 ): Promise<{ es: string; fr: string }[]> {
-  if (settings.demoMode) return demoVocab(agent.id);
+  if (settings.demoMode) return demoVocab(agent.id, text);
   const clean = parseAssistantContent(text).text;
   const raw = supabaseEnabled
     ? await proxyQuick({ op: "vocab", text: clean, level, model: settings.model })
@@ -398,7 +398,7 @@ export async function suggestReplies(
   history: ChatMessage[],
   level: LevelChoice,
 ): Promise<string[]> {
-  if (settings.demoMode) return demoSuggestions(agent.id);
+  if (settings.demoMode) return demoSuggestions(agent.id, history);
   const recent = history
     .filter((m) => !m.error)
     .slice(-6)
