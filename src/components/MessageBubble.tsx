@@ -10,7 +10,12 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { extractVocab, friendlyError, translateMessage } from "../lib/api";
+import {
+  DEMO_TRANSLATION_FALLBACK,
+  extractVocab,
+  friendlyError,
+  translateMessage,
+} from "../lib/api";
 import { useApp } from "../lib/context";
 import { parseAssistantContent } from "../lib/markers";
 import { speak, stopSpeaking, ttsSupported } from "../lib/speech";
@@ -73,8 +78,14 @@ export function MessageBubble({
     setLoading("translate");
     try {
       const translation = await translateMessage(settings, msg.content);
-      onSaveHelper(msg.id, { translation });
-      setShowTranslation(true);
+      if (translation === DEMO_TRANSLATION_FALLBACK) {
+        // Repli du mode démo : informer sans le mettre en cache, pour que
+        // le mode classe puisse ensuite fournir la vraie traduction
+        pushToast({ emoji: "📝", title: translation });
+      } else {
+        onSaveHelper(msg.id, { translation });
+        setShowTranslation(true);
+      }
     } catch (e) {
       pushToast({ emoji: "⚠️", title: friendlyError(e) });
     } finally {

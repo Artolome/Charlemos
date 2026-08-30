@@ -96,10 +96,12 @@ export default function App() {
         p.bestMission = Math.max(p.bestMission, informe.total);
         touchStreak(p);
       });
-      pushMissionReport(informe); // historisé pour le suivi professeur (mode classe)
+      // Historisé pour le suivi professeur (mode classe) — jamais en mode
+      // démo : les missions préenregistrées ne sont pas des évaluations
+      if (!settings.demoMode) pushMissionReport(informe);
       pushToast({ emoji: "🏆", title: `Mission terminée : +${bonus} XP !` });
     },
-    [applyProgress, pushToast],
+    [applyProgress, pushToast, settings.demoMode],
   );
 
   const addVocab = useCallback(

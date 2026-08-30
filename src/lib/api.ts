@@ -10,6 +10,7 @@ import type { AgentDef, ChatMessage, LevelChoice, Settings } from "./types";
 import { buildSystemPrompt } from "./agents";
 import { parseAssistantContent } from "./markers";
 import { demoStream, demoSuggestions, demoTranslation, demoVocab } from "./demo";
+export { DEMO_TRANSLATION_FALLBACK } from "./demo";
 import { getFunctionAuth, supabaseEnabled } from "./supabase";
 
 export interface ModelOption {

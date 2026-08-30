@@ -72,14 +72,30 @@ function hasWord(answer: string, ...words: string[]): boolean {
   return words.some((w) => n.includes(` ${normalize(w)} `));
 }
 
-/** « ?? », « no sé », « je ne sais pas quoi dire »... : l'élève est bloqué */
+/** Comme hasWord, mais ignore une occurrence NIÉE à courte distance
+ *  (« no quiero otra misión » n'affirme pas « otra ») */
+function affirms(answer: string, ...words: string[]): boolean {
+  const n = ` ${normalize(answer)} `;
+  return words.some((w) => {
+    const needle = ` ${normalize(w)} `;
+    let idx = -1;
+    while ((idx = n.indexOf(needle, idx + 1)) !== -1) {
+      if (!/ no (?:[^ ]+ ){0,3}$/.test(n.slice(0, idx + 1))) return true;
+    }
+    return false;
+  });
+}
+
+/** « ?? », « no sé », « je ne sais pas quoi dire »... : l'élève est bloqué.
+ *  Un message fait uniquement d'emojis (« 👍 ») n'est PAS une détresse :
+ *  c'est un acquiescement, traité par isSmallTalk. */
 function isHelpless(raw: string): boolean {
   const n = normalize(raw);
-  if (n.length < 2) return true;
+  if (n.length < 2) return !/\p{Extended_Pictographic}/u.test(raw);
   if (n.startsWith("je ne sais") || n.startsWith("no se que") || n.startsWith("nose que")) {
     return true;
   }
-  return /^(no s?e|no lo s?e|nose|jsp|idk|no entiendo|no comprendo|euh+|heu+|help|ayuda|aide)$/.test(
+  return /^(no s?e|no lo s?e|nose|jsp|idk|no idea|no entiendo|no comprendo|euh+|heu+|help|ayuda|aide)$/.test(
     n,
   );
 }
@@ -87,6 +103,7 @@ function isHelpless(raw: string): boolean {
 /** « ok », « merci », « 👍 »... : acquiescement poli, pas une réponse au défi */
 function isSmallTalk(raw: string): boolean {
   const n = normalize(raw);
+  if (n === "" && /\p{Extended_Pictographic}/u.test(raw)) return true; // 👍 🎉
   return /^(ok(ay|i)?|d ?accord|merci( beaucoup)?|super|genial|cool|vale|gracias|si|oui|yes|jaja(ja)*|lol|mdr|bien|muy bien|bravo|top|guay|chevere|perfecto|entendido|vamos|hola+|buenas|buenos dias|buenas tardes|buenas noches|hey)$/.test(
     n,
   );
@@ -122,7 +139,7 @@ const FRENCH_ONLY = new Set([
   "sans", "plein", "pleine", "surtout", "franchement", "carrement",
   "idee", "idees", "dalle", "souvent", "parfois", "environ", "bientot",
   "presque", "temps", "pour", "maintenant", "tard", "plus", "soule",
-  "barre",
+  "barre", "evidemment", "surement", "clairement", "forcement",
   // être / avoir et verbes fréquents
   "est", "sont", "sommes", "etes", "suis", "ai", "etre", "avoir", "faire",
   "aller", "aime", "aimes", "adore", "adores", "deteste", "prefere",
@@ -140,7 +157,8 @@ const FRENCH_ONLY = new Set([
   "jpense", "jcrois", "jprefere", "cest", "sappelle", "mappelle",
   "jemappelle", "jmappelle", "aujourdhui", "jm", "chui", "chuis", "chai",
   "chais", "pk", "pcq", "bcp", "jpp", "osef", "oklm", "relou", "chelou",
-  "jkiffe", "jem", "jador", "jsui", "cetait", "tro", "trankil",
+  "jkiffe", "jem", "jador", "jsui", "cetait", "tro", "trankil", "jv",
+  "jvai", "tkt",
   // école et vie quotidienne
   "ans", "annee", "annees", "ecole", "college", "classe", "cinquieme",
   "cantine", "recre", "devoirs", "matiere", "matieres", "cours",
@@ -148,8 +166,9 @@ const FRENCH_ONLY = new Set([
   "reponse", "question", "histoire", "geographie", "geo", "mathematiques",
   "maths", "sciences", "physique", "chimie", "musique", "dessin",
   "anglais", "allemand", "espagnol", "francais", "francaise",
-  "technologie", "sport", "gym", "svt", "eps", "arts", "plastiques",
-  "escalade",
+  // (« svt » n'y est pas : c'est un nom de matière ACCEPTÉ par Mateo)
+  "technologie", "sport", "gym", "eps", "arts", "plastiques",
+  "escalade", "voyage", "direction",
   "permanent", "temporaire", "chanson", "chansons", "semaine", "heure",
   "heures", "midi", "minuit", "demi", "demie", "aujourd", "hui",
   "demain", "hier", "matin", "matinee", "grasse", "soir", "jour",
@@ -168,8 +187,9 @@ const FRENCH_ONLY = new Set([
   "lapin", "oiseau", "tortue", "cheval", "souris", "perroquet", "furet",
   "poney", "cochon", "dinde", "mignon", "maison", "copain", "copains",
   "copine", "copines", "potes", "cousin", "cousins", "cousine",
-  "cousines", "famille", "frere", "soeur", "mere", "pere", "parents",
-  "vacances", "balade", "foret", "console", "jeux", "livre", "livres",
+  "cousines", "famille", "frere", "freres", "soeur", "soeurs", "mere",
+  "pere", "parents",
+  "vacances", "balade", "foret", "porte", "console", "jeux", "livre", "livres",
   "musee", "peinture", "peintre", "tableau", "guerre", "bombardement",
   "paix", "mort", "souffrance", "couleur", "surprise", "joie", "peur",
   "content", "contente", "heureux", "heureuse", "stresse", "stressee",
@@ -177,8 +197,9 @@ const FRENCH_ONLY = new Set([
   "tranquille", "flemme", "sieste", "dodo", "flippant", "magnifique",
   "douleur", "tristesse", "colere", "fete", "foraine", "perruche",
   "bizarre", "intrus",
-  "football", "foot", "basket", "natation", "danse", "velo", "piscine",
-  "plage", "trottinette", "lecture", "equitation", "coreen", "coreenne",
+  "football", "foot", "basket", "volley", "natation", "danse", "velo",
+  "piscine", "plage", "trottinette", "lecture", "equitation", "coreen",
+  "coreenne",
   // couleurs et nombres (formes espagnoles toutes différentes ;
   // « verte » est épargné : c'est l'espagnol « ver+te », Espero verte)
   "bleu", "bleue", "rouge", "vert", "jaune", "noir", "noire",
@@ -209,6 +230,7 @@ const ENGLISH_ONLY = new Set([
   "yes", "please", "thanks", "thank", "dunno", "maybe", "same",
   "nothing", "much", "mostly", "obviously", "almost", "around",
   "somewhere", "everyday", "food", "lunch", "lunchtime", "noon",
+  "milk", "toast", "bread", "eggs", "bacon", "jam", "porridge",
   "break", "snack", "crisps", "cookies", "candy", "sweets", "juice",
   "apple", "chicken", "nuggets", "pancakes", "hot", "school", "class",
   "history", "geography", "science", "favorite", "favourite", "because",
@@ -216,10 +238,11 @@ const ENGLISH_ONLY = new Set([
   "than", "after", "time", "half", "past", "good", "bad", "happy",
   "sad", "tired", "bored", "excited", "scared", "angry", "morning",
   "years", "old", "eleven", "twelve", "thirteen", "friend", "friends",
-  "brother", "sister", "grandma", "called", "home", "dog", "dogs",
+  "brother", "brothers", "sister", "sisters", "siblings", "sports",
+  "grandma", "called", "home", "dog", "dogs",
   "cat", "cats", "bunny", "game", "games", "videogames", "music",
   "songs", "movies", "painting", "war", "clue", "football", "soccer",
-  "basketball", "swimming", "spanish", "french", "english", "bruh",
+  "basketball", "swimming", "gate", "spanish", "french", "english", "bruh",
   "nah", "bro", "orange", "purple", "blue", "green", "yellow", "black",
   "white", "pink", "brown", "six", "japan", "spain", "england",
   "germany", "italy", "monday", "tuesday", "wednesday", "thursday",
@@ -244,7 +267,9 @@ const SPANISH_HINTS = new Set([
   "estan", "estoy", "soy", "eres", "tengo", "tienes", "tiene", "tenemos",
   "gusta", "gustan", "encanta", "encantan", "llamo", "llamas", "llama",
   "quiero", "quieres", "prefiero", "prefieres", "escucho", "escuchas",
-  "veo", "ves", "juego", "juegas", "voy", "vas", "hay", "si", "hola",
+  // (« si » n'y est pas : c'est aussi le français « si » — un « sí » seul
+  //  reste accepté par les listes accept et le filtre small-talk)
+  "veo", "ves", "juego", "juegas", "voy", "vas", "hay", "hola",
   "buenas", "buenos", "dias", "gracias", "anos", "ano", "muy", "mucho",
   "mucha", "muchos", "muchas", "gusto", "tambien", "pero", "como", "cual",
   "donde", "cuando", "porque", "con", "por", "para", "conozco", "vivo",
@@ -269,8 +294,9 @@ const SPANISH_HINTS = new Set([
   "miercoles", "jueves", "viernes", "quesadillas", "enchiladas",
   "cesta",
   "historia", "matematicas", "ingles", "ciencias", "lengua", "frances",
-  // (« chocolate » n'y est pas : c'est aussi le mot anglais)
-  "galletas", "fruta", "yogur", "cereales", "zumo", "queso", "ensalada",
+  // (« chocolate » n'y est pas : c'est aussi le mot anglais ;
+  //  « cereales » non plus : c'est « céréales » sans accent)
+  "galletas", "fruta", "yogur", "zumo", "queso", "ensalada",
   "sopa", "tacos", "patatas", "pescado", "carne", "pollo", "arroz",
   "hamburguesa", "agua", "leche", "pan", "caliente", "palomitas",
   "practico", "escribo", "aburro", "aburrido", "divertido", "divertida",
@@ -310,9 +336,10 @@ const GLUED_EN = /^(?:ilike|ilove|iam|ihave|iwant|iplay|iwatch|ieat|igo|myname)/
  *  leur présence l'emporte sur les noms espagnols qui suivent
  *  (« je bois un zumo de naranja » reste une phrase française). */
 const STRONG_FR = new Set([
-  "je", "jai", "jadore", "jsuis", "jsui", "jvais", "jveux", "jmange",
-  "jbois", "jkiffe", "jem", "jador", "chui", "chuis", "cest", "cetait",
-  "jemappelle", "jmappelle", "mappelle", "sappelle", "jm",
+  "je", "jai", "jadore", "jsuis", "jsui", "jvais", "jvai", "jv",
+  "jveux", "jmange", "jbois", "jkiffe", "jem", "jador", "chui", "chuis",
+  "cest", "cetait", "jemappelle", "jmappelle", "mappelle", "sappelle",
+  "jm",
 ]);
 
 /** "fr" si la réponse est écrite en français, "en" si anglais, null sinon.
@@ -366,7 +393,15 @@ export function detectForeign(raw: string): "fr" | "en" | null {
       strongEn = true; // « ilikefootball »
     }
     if (t === "im") strongEn = true;
-    if (SPANISH_HINTS.has(t)) es++;
+    // « es » après « tu » est le français « tu es », pas un indice espagnol
+    if (SPANISH_HINTS.has(t) && !(t === "es" && prev === "tu")) es++;
+    // « on + ... » en tête de message : charpente française (« on reste a
+    // la casa ») — « on » n'existe pas en espagnol, et une phrase anglaise
+    // (« On Monday... ») garde la main car strongFr exige fr >= en
+    if (t === "on" && i === 0 && tokens.length >= 2) strongFr = true;
+    // « mes » après un mot français est le possessif français (« avec mes
+    // amigos ») — sinon c'est le mois espagnol (« un mes », « cada mes »)
+    if (t === "mes" && FRENCH_ONLY.has(prev)) fr++;
     if (t.length === 1) {
       // élisions françaises : « c'est », « m'appelle », « l'école » ;
       // seul « j' » (jamais espagnol) est un marqueur structurel fort
@@ -390,6 +425,22 @@ export function detectForeign(raw: string): "fr" | "en" | null {
     // « tu es... », « tu as... » : conjugaison française — simple point fr,
     // car « tú es de México » est aussi une faute d'apprenant en espagnol
     if (t === "tu" && (next === "es" || next === "as")) fr++;
+    // « très bien » : les deux mots sont partagés, mais le bigramme
+    // n'existe pas en espagnol (on dit « muy bien »)
+    if (t === "tres" && next === "bien") {
+      fr++;
+      strongFr = true;
+    }
+    // « y a un... » / « ya un... » en TÊTE de message : « il y a » sans le
+    // il — jamais en début de phrase espagnole (« voy al cine y a la playa »
+    // reste protégé car en milieu de phrase)
+    if (i === 0) {
+      if (t === "y" && next === "a" && ["un", "une", "des", "le", "la", "les"].includes(tokens[2] ?? "")) {
+        fr++;
+        strongFr = true;
+      }
+      if (t === "ya" && ["un", "une", "des"].includes(next)) fr++;
+    }
     // Article français devant un nom qui n'est pas espagnol (« le japon »,
     // « les series ») — comptés seulement si la réponse ne contient par
     // ailleurs AUCUN mot espagnol, pour épargner le pronom espagnol
@@ -473,21 +524,31 @@ const NAME_STOP = new Set([
   "me", "llamo", "yo", "soy", "es", "hola", "buenas", "y", "de", "la",
   "el", "mi", "tengo", "anos", "claro", "pues", "senor", "senora",
   "que", "tal", "bueno", "vale", "todos", "capitan", "profesor", "don",
+  "si", "no", "oui", "nombre", "apellido",
 ]);
 
-/** Extrait le prénom d'une réponse acceptée (« Me llamo Léa » → « Léa ») */
+/** Prénoms courants qui sont aussi des mots espagnols : jamais exclus */
+const NAME_ALLOW = new Set(["leo", "rosa", "mateo", "diego", "lucia", "valeria"]);
+
+/** Extrait le prénom d'une réponse acceptée (« Me llamo Léa » → « Léa »).
+ *  Un mot qui suit « llamo »/« soy » est un prénom même s'il coïncide avec
+ *  un mot espagnol (« Me llamo Rosa », « Soy Léo »). */
 function extractName(raw: string): string {
+  let prev = "";
   for (const w of raw.split(/[^\p{L}\p{M}'’-]+/u)) {
     const t = normalize(w);
+    if (!t) continue;
+    const afterIntro = ["llamo", "llama", "soy", "es"].includes(prev);
     if (
       t.length >= 2 &&
       !NAME_STOP.has(t) &&
-      !FRENCH_ONLY.has(t) &&
-      !ENGLISH_ONLY.has(t) &&
-      !SPANISH_HINTS.has(t)
+      (NAME_ALLOW.has(t) ||
+        afterIntro ||
+        (!FRENCH_ONLY.has(t) && !ENGLISH_ONLY.has(t) && !SPANISH_HINTS.has(t)))
     ) {
       return w[0].toUpperCase() + w.slice(1);
     }
+    prev = t;
   }
   return "";
 }
@@ -502,7 +563,8 @@ function astucePara(raw: string): string | null {
   if (/ me gusta (los|las) /.test(n)) {
     return "Au pluriel, gustar prend un N : « Me gustAN los videojuegos ».";
   }
-  if (/ me gustan (el|la) /.test(n)) {
+  if (/ me gustan (el|la) /.test(n) && !/ me gustan (el|la) [^ ]+ y /.test(n)) {
+    // (« me gustan el fútbol y los videojuegos » est correct : coordination)
     return "Au singulier, pas de N : « Me gustA la música ».";
   }
   if (/ me gusta (futbol|musica|baloncesto|espanol|deporte|cine|natacion) /.test(n)) {
@@ -514,20 +576,49 @@ function astucePara(raw: string): string | null {
   return null;
 }
 
+/** Choisit la réaction différenciée d'une étape : on ne regarde que la
+ *  partie DÉCLARATIVE de la réponse (pas les questions en retour comme
+ *  « ¿Es difícil el vóley? »), on ignore un mot directement nié
+ *  (« no rosa ») et, si plusieurs options sont citées, le choix final de
+ *  l'élève est la DERNIÈRE (« no me gusta el rosa, prefiero el azul »). */
+function pickReaction(
+  raw: string,
+  reactions?: { when: string[]; reply: string }[],
+): string | undefined {
+  if (!reactions?.length) return undefined;
+  const decl = ` ${normalize(raw.replace(/[^.!?\n¡¿]*\?/g, " "))} `;
+  let best: { reply: string; pos: number } | null = null;
+  for (const r of reactions) {
+    for (const w of r.when) {
+      const wn = normalize(w);
+      const needle = ` ${wn} `;
+      const pos = decl.lastIndexOf(needle);
+      if (pos < 0) continue;
+      // Mot nié à courte distance (« no tengo hermanos », « no juego al
+      // fútbol ») : ne déclenche pas la réaction — sauf si le mot when
+      // est lui-même une négation (« no », « ninguno », « no practico »)
+      const isNegWord = /^(no|ninguno|nada)\b/.test(wn);
+      if (!isNegWord && / no (?:[^ ]+ ){0,3}$/.test(decl.slice(0, pos + 1))) continue;
+      if (best === null || pos > best.pos) best = { reply: r.reply, pos };
+    }
+  }
+  return best?.reply;
+}
+
 /** Choix de la quête au lancement : le Capitán obéit au numéro de mission
  *  demandé ; sinon on enchaîne les quêtes dans l'ordre à chaque relance. */
 function pickQuest(
   agentId: string,
   quests: Quest[],
   launchMsg: string,
-  completed: number,
+  fallback: number,
 ): number {
   if (agentId === "capitan" && quests.length >= 3) {
-    if (hasWord(launchMsg, "1", "calavera", "operacion")) return 0;
-    if (hasWord(launchMsg, "2", "cuadro", "desaparecido")) return 1;
-    if (hasWord(launchMsg, "3", "sorpresa")) return 2;
+    if (hasWord(launchMsg, "1", "uno", "calavera", "operacion")) return 0;
+    if (hasWord(launchMsg, "2", "dos", "cuadro", "desaparecido")) return 1;
+    if (hasWord(launchMsg, "3", "tres", "sorpresa")) return 2;
   }
-  return quests.length ? completed % quests.length : 0;
+  return quests.length ? fallback % quests.length : 0;
 }
 
 /**
@@ -542,7 +633,6 @@ function runQuest(agentId: string, quests: Quest[], userMessages: string[]): str
   let quest = quests[0];
   let pos = quest.firstAskIsStarter ? 0 : -1;
   let attempts = 0;
-  let completed = 0;
   let nombre = "";
   let results: number[] = [];
   /** Remplace {nombre} par le prénom mémorisé (ou l'efface proprement) */
@@ -554,8 +644,38 @@ function runQuest(agentId: string, quests: Quest[], userMessages: string[]): str
 
   for (const raw of userMessages) {
     if (pos === -1 || pos >= quest.steps.length) {
+      // Après un rapport final : un refus ou un au revoir (« no gracias »,
+      // « adiós »...) ne relance PAS la quête suivante — sauf si le
+      // message contient AUSSI un signal de relance explicite et NON NIÉ
+      // (« ¡Gracias! ¡Otra misión! » relance ; « no quiero otra » non).
+      const wantsMore =
+        affirms(raw, "si", "otra", "otro", "vale", "empezamos", "seguimos", "mision", "reto") ||
+        (agentId === "capitan" &&
+          affirms(raw, "1", "2", "3", "uno", "dos", "tres", "calavera", "cuadro", "sorpresa"));
+      if (
+        pos >= quest.steps.length &&
+        !wantsMore &&
+        hasWord(raw, "no", "gracias", "merci", "adios", "chao", "luego")
+      ) {
+        reply =
+          "¡Vale! 😊 Cuando quieras seguir, escríbeme cualquier cosa y empezamos otra aventura.";
+        continue;
+      }
+      // Au tout premier contact, un message qui COMMENCE par une négation
+      // sans signal de relance ne lance pas la mission avec un faux
+      // « ¡Excelente elección! »
+      if (pos === -1 && /^(no+|non|nan)\b/.test(normalize(raw)) && !wantsMore) {
+        reply =
+          "¡Vale! 😊 Cuando quieras seguir, escríbeme cualquier cosa y empezamos otra aventura.";
+        continue;
+      }
       // Lancement de la quête (ou relance : on passe à la quête suivante)
-      questIdx = pickQuest(agentId, quests, raw, completed);
+      questIdx = pickQuest(
+        agentId,
+        quests,
+        raw,
+        pos === -1 ? 0 : (questIdx + 1) % quests.length,
+      );
       quest = quests[questIdx];
       pos = 0;
       attempts = 0;
@@ -568,9 +688,32 @@ function runQuest(agentId: string, quests: Quest[], userMessages: string[]): str
 
     // Copier-coller de la QUESTION du personnage : pas une réponse.
     // (On ne compare que la partie interrogative : réutiliser une
-    // phrase-modèle déclarative reste une excellente réponse !)
-    const q = questionPart(step.ask);
-    if (q.length >= 12 && na.includes(q)) {
+    // phrase-modèle déclarative reste une excellente réponse — et une
+    // vraie réponse SUIVIE de la question renvoyée, « ..., ¿y tú? ¿cuál
+    // es tu asignatura favorita? », aussi.)
+    // Écho / collage du message du personnage : pas une réponse.
+    // - un long extrait du message collé tel quel (même sans « ? »),
+    // - OU l'une de ses questions recopiée sans y ajouter de réponse.
+    // Une vraie réponse SUIVIE de la question renvoyée passe, et recopier
+    // une option courte proposée par la question (« doce menos cuarto »)
+    // reste une réponse.
+    const askStripped = step.ask.replace(/\[\[[^\]]*\]\]/g, " ");
+    const askNorm = normalize(askStripped);
+    const askFrags = (askStripped.match(/[^.!?\n¡¿]*\?/g) ?? [])
+      .map(normalize)
+      .filter((f) => f.length >= 12);
+    const parrot =
+      // collage quasi complet du message (même sans « ? ») — réutiliser
+      // une phrase-modèle déclarative du personnage reste une réponse
+      (na.length >= 25 &&
+        na.length >= 0.8 * askNorm.length &&
+        askNorm.includes(na)) ||
+      askFrags.some((f) => {
+        if (!na.includes(f)) return false;
+        const rest = na.replace(f, " ").replace(/\s+/g, " ").trim();
+        return rest.length < 8;
+      });
+    if (parrot) {
       reply = `Jeje, ¡esa es MI pregunta! 😄 Ahora te toca responder a ti:\n\n${step.ask}`;
       continue;
     }
@@ -586,15 +729,33 @@ function runQuest(agentId: string, quests: Quest[], userMessages: string[]): str
       continue;
     }
     // L'élève hésite entre les options (« ¿azul o naranja? ») : il doit
-    // choisir ! (Poser une question en retour, « ¿y tú? », reste permis.)
+    // choisir ! On ne compte que la partie DÉCLARATIVE de la réponse
+    // (renvoyer la question avec ses options reste permis), une option
+    // NIÉE n'est pas une hésitation (« No me gustan las series, prefiero
+    // los videojuegos »), et « los dos » sur une question d'opinion non
+    // notée est un vrai choix.
     const nSpaced = ` ${na} `;
+    const declRaw = raw.replace(/[^.!?\n¡¿]*\?/g, " ").trim();
+    const base = declRaw ? ` ${normalize(declRaw)} ` : nSpaced;
     const distractorHits =
-      step.distractors?.filter((d) => hasWord(raw, d)).length ?? 0;
+      step.distractors?.filter((d) => {
+        const dn = normalize(d);
+        if (!base.includes(` ${dn} `)) return false;
+        return !new RegExp(` no (?:[^ ]+ ){0,3}(?:el |la |los |las )?${dn} `).test(base);
+      }).length ?? 0;
+    const both =
+      step.scored === false &&
+      (nSpaced.includes(" los dos ") ||
+        nSpaced.includes(" las dos ") ||
+        // opinion combinée : « bonito y un poco extraño » est un vrai
+        // choix, pas une hésitation (l'hésitation utilise « o »)
+        (base.includes(" y ") && !base.includes(" o ") && !base.includes(" ou ")));
     const hesitates =
       passes &&
+      !both &&
       (distractorHits >= 2 ||
         (distractorHits >= 1 &&
-          (nSpaced.includes(" o ") || nSpaced.includes(" ou "))));
+          (base.includes(" o ") || base.includes(" ou "))));
     if (hesitates) {
       reply = `¡Las dos opciones no, elige una sola! 😄\n\n${step.ask}`;
       continue;
@@ -606,11 +767,9 @@ function runQuest(agentId: string, quests: Quest[], userMessages: string[]): str
       pos++;
       attempts = 0;
       const done = pos >= quest.steps.length;
-      if (done) completed++;
       const next = done ? quest.final(results) : fill(quest.steps[pos].ask);
       // Réaction différenciée selon la réponse (bonito vs extraño...)
-      const reaction =
-        step.reactions?.find((r) => hasWord(raw, ...r.when))?.reply ?? step.success;
+      const reaction = pickReaction(raw, step.reactions) ?? step.success;
       reply = [fill(reaction), next].filter(Boolean).join("\n\n");
       // Astuce corrective : la réponse est acceptée mais contient une
       // erreur A1 classique → on avance ET on corrige, comme la vraie IA
@@ -624,7 +783,6 @@ function runQuest(agentId: string, quests: Quest[], userMessages: string[]): str
       pos++;
       attempts = 0;
       const done = pos >= quest.steps.length;
-      if (done) completed++;
       const next = done ? quest.final(results) : fill(quest.steps[pos].ask);
       reply = [step.reveal, next].filter(Boolean).join("\n\n");
     }
@@ -653,6 +811,11 @@ const PALABRAS_ACTIVIDADES = [
   "baloncesto",
   "natacion",
   "nadar",
+  "nado",
+  "cine",
+  "piscina",
+  "salgo",
+  "compras",
   "deporte",
   "videojuegos",
   "juegos",
@@ -934,6 +1097,9 @@ const MATEO_QUEST: Quest = {
           "barrita",
           "compota",
           "brioche",
+          "meriendo",
+          "merienda",
+          "pain au chocolat",
         ),
       hint: "¿Qué comes? 🥪 Pista: « Como una fruta » o « Como un bocadillo ». ¡Inténtalo en español!",
       reveal: "Yo te ayudo: puedes decir « Como una manzana » 🍎 (une pomme). ¡Qué rico!",
@@ -967,7 +1133,7 @@ const VALERIA_QUEST: Quest = {
   steps: [
     {
       ask: "¡Hola, hola! 🦋 Soy Valeria, de Oaxaca, en el sur de México. Me encanta viajar y tomar fotos de fiestas y paisajes. ¿Conoces México, sí o no?",
-      check: (a) => hasWord(a, "si", "no", "conozco", "mexico"),
+      check: (a) => hasWord(a, "si", "no", "claro", "conozco", "mexico"),
       hint: "¿Sí o no? 😊 Responde: « Sí » o « No, no conozco México ». ¡Inténtalo!",
       reveal: "Puedes decir: « No, no conozco México » — ¡pues te lo enseño yo! 🦋",
       success: "",
@@ -1063,7 +1229,7 @@ const DIEGO_QUEST: Quest = {
   steps: [
     {
       ask: "¡Buenas! 🎨 Soy Diego, de Sevilla. Me encantan el arte, la música y las leyendas misteriosas. ¿Te cuento una historia? Responde: sí o no.",
-      check: (a) => hasWord(a, "si", "no", "vale", "cuenta", "cuentame", "historia"),
+      check: (a) => hasWord(a, "si", "no", "claro", "vale", "cuenta", "cuentame", "historia"),
       hint: "¿Sí o no? 🎨 Responde simplemente: « Sí » o « No ». ¡Inténtalo!",
       reveal: "Imagino que sí... 😄 ¡Te la cuento!",
       success: "",
@@ -1393,16 +1559,19 @@ function translateParts(parts: string[]): string | null {
   return null;
 }
 
+/** Repli quand un fragment n'a pas de traduction : affiché mais jamais
+ *  mis en cache (voir MessageBubble), pour qu'un passage en mode classe
+ *  redonne la vraie traduction IA. */
+export const DEMO_TRANSLATION_FALLBACK =
+  "Traduction indisponible pour ce message en mode démo. (En mode classe ou avec une clé API, l'IA traduit tout !)";
+
 export function demoTranslation(text: string): string {
   const clean = text.replace(/\[\[[^\]]*\]\]/g, "").trim();
   const parts = clean
     .split(/\n{2,}/)
     .map((p) => p.trim())
     .filter(Boolean);
-  return (
-    translateParts(parts) ??
-    "📝 Traduction indisponible pour ce message en mode démo. (En mode classe ou avec une clé API, l'IA traduit tout !)"
-  );
+  return translateParts(parts) ?? DEMO_TRANSLATION_FALLBACK;
 }
 
 /** Retrouve les aides (suggestions, vocabulaire) du défi contenu dans un
@@ -1433,7 +1602,7 @@ const DEMO_VOCAB: Record<string, { es: string; fr: string }[]> = {
     { es: "el Día de Muertos", fr: "le jour des Morts" },
     { es: "la mariposa", fr: "le papillon" },
     { es: "la ofrenda", fr: "l'autel des morts / l'offrande" },
-    { es: "el cempasúchil", fr: "l'œillet d'Inde (fleur orange)" },
+    { es: "el cempasúchil", fr: "la rose d'Inde (fleur orange)" },
   ],
   diego: [
     { es: "el cuadro", fr: "le tableau" },
@@ -1525,6 +1694,10 @@ regFrag(FOREIGN_NUDGE.en, {
 // Variante SANS prénom du succès de Mateo (la variante avec prénom est
 // traduite dynamiquement par DYNAMIC_FR)
 regFrag("¡Genial! 😃 ¡Mucho gusto!", { fr: "Génial ! 😃 Enchanté !" });
+// Réponse d'attente après un refus poli suivant un rapport final
+regFrag("¡Vale! 😊 Cuando quieras seguir, escríbeme cualquier cosa y empezamos otra aventura.", {
+  fr: "D'accord ! 😊 Quand tu veux continuer, écris-moi n'importe quoi et on repart pour une aventure.",
+});
 
 // ===== CONTENU GÉNÉRÉ PAR IA (révisé) — missions 2-3, retos, conversations 2, aides =====
 // Généré par un pipeline d'agents (génération + révision pédagogique),
@@ -1712,6 +1885,13 @@ const MISSION_2: Quest = questFromData([
       "batido",
       "bebo",
       "tomo",
+      "cereales",
+      "pan",
+      "chocolate",
+      "caliente",
+      "colacao",
+      "croissant",
+      "cruasan",
       "nada"
     ],
     "distractors": [],
@@ -1901,8 +2081,7 @@ const MISSION_3: Quest = questFromData([
   {
     "ask": "[[etapa: 3/6]]\nEn el aeropuerto, ¡problema! Tu billete (billet) está medio borrado (à moitié effacé): « Vuelo a Buenos Aires — puerta de embarque: seis + seis ». ✈️ ¿Qué número es? ¡Escríbelo en español!",
     "accept": [
-      "doce",
-      "12"
+      "doce"
     ],
     "distractors": [],
     "hint": "El avión sale pronto... ✈️ Pista: 6 + 6. En español, el número empieza por « do___ ». ¡Inténtalo otra vez!",
@@ -1997,7 +2176,16 @@ const MISSION_3: Quest = questFromData([
       "tranquila",
       "fenomenal",
       "estupendo",
-      "estupenda"
+      "estupenda",
+      "bien",
+      "genial",
+      "mal",
+      "fatal",
+      "regular",
+      "triste",
+      "guay",
+      "super",
+      "chevere"
     ],
     "distractors": [],
     "hint": "Carlos espera una frase EN ESPAÑOL... 🚕 Pista: empieza por « Estoy... » (cansado, contento, nervioso...). ¡Inténtalo!",
@@ -2018,7 +2206,9 @@ const MISSION_3: Quest = questFromData([
           "contenta",
           "feliz",
           "emocionado",
-          "emocionada"
+          "emocionada",
+          "bien",
+          "genial"
         ],
         "text": "¡Qué energía, agente! A Carlos le encanta tu entusiasmo. ⭐",
         "textFr": "Quelle énergie, agent ! Carlos adore ton enthousiasme. ⭐"
@@ -2097,8 +2287,8 @@ const MISSION_3: Quest = questFromData([
       "success": "Le BRÉSIL, exact ! Là-bas, on parle portugais. 🎉 Le paquet fait « clic » et s'ouvre lentement..."
     }
   }
-], missionFinal("¡MISIÓN CUMPLIDA, agente internacional! 🎉 Dentro del paquete hay una carta y fotos de la agente Sofía para su abuela Amparo... ¡Amparo está muy feliz y te regala alfajores (des biscuits argentins)! Has cruzado el mundo hispano en un día: Madrid, Valencia y Buenos Aires. 🌍 ¿Quieres intentarlo otra vez? Escríbeme y la misión recomienza. (Mission de démonstration — en mode classe ou avec une clé API, les missions sont générées par l'IA.)"));
-regFrag("¡MISIÓN CUMPLIDA, agente internacional! 🎉 Dentro del paquete hay una carta y fotos de la agente Sofía para su abuela Amparo... ¡Amparo está muy feliz y te regala alfajores (des biscuits argentins)! Has cruzado el mundo hispano en un día: Madrid, Valencia y Buenos Aires. 🌍 ¿Quieres intentarlo otra vez? Escríbeme y la misión recomienza. (Mission de démonstration — en mode classe ou avec une clé API, les missions sont générées par l'IA.)", { fr: "MISSION ACCOMPLIE, agent international ! 🎉 Dans le paquet, il y a une lettre et des photos de l'agente Sofía pour sa grand-mère Amparo... Amparo est très heureuse et t'offre des alfajores (des biscuits argentins) ! Tu as traversé le monde hispanophone en un jour : Madrid, Valence et Buenos Aires. 🌍 Tu veux réessayer ? Écris-moi et la mission recommence. (Mission de démonstration — en mode classe ou avec une clé API, les missions sont générées par l'IA.)" });
+], missionFinal("¡MISIÓN CUMPLIDA, agente internacional! 🎉 Dentro del paquete hay una carta y fotos de la agente Sofía para su abuela Amparo... ¡Amparo está muy feliz y te regala alfajores (des biscuits argentins)! Has cruzado el mundo hispano en un día: Madrid, Valencia y Buenos Aires. 🌍"));
+regFrag("¡MISIÓN CUMPLIDA, agente internacional! 🎉 Dentro del paquete hay una carta y fotos de la agente Sofía para su abuela Amparo... ¡Amparo está muy feliz y te regala alfajores (des biscuits argentins)! Has cruzado el mundo hispano en un día: Madrid, Valencia y Buenos Aires. 🌍", { fr: "MISSION ACCOMPLIE, agent international ! 🎉 Dans le paquet, il y a une lettre et des photos de l'agente Sofía pour sa grand-mère Amparo... Amparo est très heureuse et t'offre des alfajores (des biscuits argentins) ! Tu as traversé le monde hispanophone en un jour : Madrid, Valence et Buenos Aires. 🌍" });
 
 const RETO_GUSTAR: Quest = questFromData([
   {
@@ -2264,7 +2454,7 @@ const RETO_GUSTAR: Quest = questFromData([
     }
   },
   {
-    "ask": "Última pregunta, ¡la más difícil! « Me ___ bailar » (bailar = danser). ¿Gusta o gustan? ⚡",
+    "ask": "Última pregunta, ¡la más difícil! « Me ___ bailar » (bailar = danser). ¿Cuál eliges: gusta o gustan? ⚡",
     "accept": [
       "gusta"
     ],
@@ -2298,7 +2488,7 @@ const RETO_GUSTAR: Quest = questFromData([
       }
     ],
     "fr": {
-      "ask": "Dernière question, la plus difficile ! « Me ___ bailar » (bailar = danser). Gusta ou gustan ? ⚡",
+      "ask": "Dernière question, la plus difficile ! « Me ___ bailar » (bailar = danser). Lequel choisis-tu : gusta ou gustan ? ⚡",
       "hint": "Réfléchis ! ⚡ Indice : après gustar, un VERBE à l'infinitif (bailar) compte comme UNE seule chose → GUSTA, sans N. « Me ___ bailar »... Essaie !",
       "reveal": "La réponse était « GUSTA » : « Me gusta bailar » — devant un infinitif, toujours gusta au singulier.",
       "success": "Impressionnant ! « Me gusta bailar » ✔ — infinitif → toujours gusta au singulier. Olé !"
@@ -2432,7 +2622,7 @@ const RETO_HORA: Quest = questFromData([
     }
   },
   {
-    "ask": "Pregunta 2 de 3: ahora el reloj marca la 1:00. Completa: « ___ la una ». ¡Ojo, es una trampa (un piège) célebre! 😉",
+    "ask": "Pregunta 2 de 3: ahora el reloj marca la 1:00. Completa: « ___ la una ». ¡Ojo, hay una trampa (un piège) célebre! 😉",
     "accept": [
       "es",
       "es la",
@@ -2544,6 +2734,8 @@ const MATEO_QUEST_2: Quest = questFromData([
       "escalada",
       "equitacion",
       "ninguno"
+      ,"claro",
+      "veces"
     ],
     "distractors": [],
     "hint": "¿Deporte? ⚽ Pista: « Sí, juego al fútbol » o « No, no hago deporte ». ¡Inténtalo!",
@@ -2563,7 +2755,7 @@ const MATEO_QUEST_2: Quest = questFromData([
           "futbol"
         ],
         "text": "¿Fútbol? ¡Como yo! ⚽ ¡Choca esos cinco!",
-        "textFr": "Le foot ? Comme moi ! ⚽ Tape m'en cinq !"
+        "textFr": "Le foot ? Comme moi ! ⚽ Tape-m'en cinq !"
       }
     ],
     "sug": [
@@ -2853,6 +3045,9 @@ const VALERIA_QUEST_2: Quest = questFromData([
       "no",
       "quiero",
       "claro"
+      ,"vale",
+      "venga",
+      "orale"
     ],
     "distractors": [],
     "hint": "¿Sí o no? 🎁 Responde: « Sí, quiero » o « No ». ¡Inténtalo!",
@@ -3060,7 +3255,7 @@ const VALERIA_QUEST_2: Quest = questFromData([
       }
     ],
     "fr": {
-      "ask": "Ma photo préférée, c'est celle de ma famille 📷 : je vis avec ma maman et ma grand-mère 👵, elle me raconte des légendes zapotèques le soir. L'appareil photo est à mon grand-père, il est très vieux ! Et toi ? Comment est ta famille ?",
+      "ask": "Ma photo préférée, c'est celle de ma famille 📷 : je vis avec ma maman et ma grand-mère 👵, elle me raconte des légendes zapotèques le soir. L'appareil photo de mon grand-père est très ancien ! Et toi ? Comment est ta famille ?",
       "hint": "Ta famille ? 👨‍👩‍👧 Indice : « J'ai un frère » ou « Je vis avec ma mère ». Essaie !",
       "reveal": "Tu peux dire : « Je vis avec mes parents et j'ai un frère » 😊 Ta famille est sûrement géniale !",
       "success": ""
@@ -3237,6 +3432,7 @@ const DIEGO_QUEST_2: Quest = questFromData([
       "siempre",
       "nunca",
       "veces",
+      "claro",
       "silencio",
       "pop",
       "rap",
@@ -3558,7 +3754,16 @@ const LUCIA_QUEST_2: Quest = questFromData([
       "tranquilo",
       "tranquila",
       "aburrido",
-      "aburrida"
+      "aburrida",
+      "mal",
+      "triste",
+      "fatal",
+      "regular",
+      "genial",
+      "guay",
+      "super",
+      "mas o menos",
+      "asi asi"
     ],
     "distractors": [],
     "hint": "¿Cómo estás? 😊 Pista: « Estoy muy bien » o « Estoy cansado / cansada ». ¡Inténtalo!",
@@ -3588,7 +3793,10 @@ const LUCIA_QUEST_2: Quest = questFromData([
           "feliz",
           "chevere",
           "fenomenal",
-          "bien"
+          "bien",
+          "genial",
+          "guay",
+          "super"
         ],
         "text": "¡Yupi! 🎉 Yo también estoy feliz — ¡me encanta hablar contigo!",
         "textFr": "Youpi ! 🎉 Moi aussi je suis heureuse — j'adore parler avec toi !"
@@ -3625,7 +3833,7 @@ const LUCIA_QUEST_2: Quest = questFromData([
     }
   },
   {
-    "ask": "Oye, ¡cuéntame de tu colegio! Aquí en Madrid yo como en casa, ¡a las tres de la tarde! En Bogotá mis primos comen a las doce, como en Francia. 😮 ¿Tú comes en la cantina (à la cantine) o en casa?\n[[astuce: Pour dire l'heure : « a la una, a las dos, a las tres... » → « Como a las tres » = je mange à trois heures.]]",
+    "ask": "Oye, ¡cuéntame de tu colegio! Aquí en Madrid yo como en casa, ¡a las tres de la tarde! En Bogotá mis primos comen a las doce, como en Francia. 😮 ¿Tú comes en el comedor del colegio (à la cantine) o en casa?\n[[astuce: Pour dire l'heure : « a la una, a las dos, a las tres... » → « Como a las tres » = je mange à trois heures.]]",
     "accept": [
       "cantina",
       "casa",
@@ -3635,16 +3843,16 @@ const LUCIA_QUEST_2: Quest = questFromData([
       "cantina",
       "casa"
     ],
-    "hint": "¿Cantina o casa? 🍽️ Responde: « Como en la cantina » o « Como en casa ». ¡Inténtalo!",
-    "reveal": "Te ayudo: puedes decir « Como en la cantina del colegio » 🍽️ ¡En España comemos más tarde!",
+    "hint": "¿Comedor o casa? 🍽️ Responde: « Como en el comedor » o « Como en casa ». ¡Inténtalo!",
+    "reveal": "Te ayudo: puedes decir « Como en el comedor del colegio » 🍽️ ¡En España comemos más tarde!",
     "success": "¡Qué interesante! 😋",
     "reactions": [
       {
         "when": [
-          "cantina",
-          "comedor"
+          "comedor",
+          "cantina"
         ],
-        "text": "¡En la cantina con los amigos! 😄 En España muchos niños comen en casa, ¡a las tres!",
+        "text": "¡En el comedor con los amigos! 😄 En España muchos niños comen en casa, ¡a las tres!",
         "textFr": "À la cantine avec les copains ! 😄 En Espagne, beaucoup d'enfants mangent à la maison, à trois heures !"
       },
       {
@@ -3656,13 +3864,13 @@ const LUCIA_QUEST_2: Quest = questFromData([
       }
     ],
     "sug": [
-      "Como en la cantina.",
+      "Como en el comedor.",
       "Como en casa, ¿y tú a qué hora comes?",
-      "Como en la cantina con mis amigos."
+      "Como en el comedor con mis amigos."
     ],
     "vocab": [
       {
-        "es": "la cantina",
+        "es": "el comedor",
         "fr": "la cantine"
       },
       {
@@ -3680,8 +3888,8 @@ const LUCIA_QUEST_2: Quest = questFromData([
     ],
     "fr": {
       "ask": "Dis, raconte-moi ton collège ! Ici à Madrid, moi je mange à la maison, à trois heures de l'après-midi ! À Bogotá, mes cousins mangent à midi, comme en France. 😮 Toi, tu manges à la cantine ou à la maison ?",
-      "hint": "Cantine ou maison ? 🍽️ Réponds : « Como en la cantina » (je mange à la cantine) ou « Como en casa » (à la maison). Essaie !",
-      "reveal": "Je t'aide : tu peux dire « Como en la cantina del colegio » (je mange à la cantine du collège) 🍽️ En Espagne, on mange plus tard !",
+      "hint": "Cantine ou maison ? 🍽️ Réponds : « Como en el comedor » (je mange à la cantine) ou « Como en casa » (à la maison). Essaie !",
+      "reveal": "Je t'aide : tu peux dire « Como en el comedor del colegio » (je mange à la cantine du collège) 🍽️ En Espagne, on mange plus tard !",
       "success": "Comme c'est intéressant ! 😋"
     }
   },
@@ -3708,13 +3916,26 @@ const LUCIA_QUEST_2: Quest = questFromData([
       "equitacion",
       "balonmano",
       "patinaje",
-      "ninguno"
+      "ninguno",
+      "si",
+      "no"
     ],
     "distractors": [],
     "hint": "¿Un deporte? 🏐 Pista: « Juego al fútbol » o « No practico ningún deporte ». ¡Inténtalo!",
     "reveal": "Puedes decir: « Juego al baloncesto » o « No practico deporte » 😊 ¡Yo esta semana solo pienso en mi partido del sábado!",
     "success": "¡Qué guay! 💪",
     "reactions": [
+      {
+        "when": [
+          "no",
+          "ninguno",
+          "no practico",
+          "no hago",
+          "no juego"
+        ],
+        "text": "¿No? ¡No pasa nada! 😄 Puedes venir a animarme (m'encourager) el sábado.",
+        "textFr": "Non ? Pas grave ! 😄 Tu peux venir m'encourager samedi."
+      },
       {
         "when": [
           "voley",
@@ -3986,7 +4207,7 @@ const EXISTING_AIDES: Record<string, (StepAides | undefined)[]> = {
     {
       "fr": {
         "ask": "À l'intérieur du musée, tu vois une copie géante d'un tableau en noir et blanc qui représente la guerre, peint par Picasso. Comment s'appelle-t-il ? Indice : ça commence par G...",
-        "hint": "Le tableau attend... 🖼️ Indice : ça commence par « Guer- » et c'est le nom d'un village du Pays basque. Réessaie !",
+        "hint": "Le tableau attend... 🖼️ Indice : ça commence par « Guer- » et c'est le nom d'un petit village du Pays basque. Réessaie !",
         "reveal": "C'est GUERNICA, de Picasso (1937) — l'original est au musée Reina Sofía, à Madrid. Le tableau te laisse quand même passer. 🖼️",
         "success": "Exact, Guernica ! (L'original est au musée Reina Sofía, à Madrid.) Le tableau te laisse passer. 🖼️"
       },
@@ -4406,7 +4627,7 @@ const EXISTING_AIDES: Record<string, (StepAides | undefined)[]> = {
         },
         {
           "es": "el cempasúchil",
-          "fr": "l'œillet d'Inde (fleur orange)"
+          "fr": "la rose d'Inde (fleur orange)"
         },
         {
           "es": "parecido / parecida",
@@ -4598,7 +4819,7 @@ const EXISTING_AIDES: Record<string, (StepAides | undefined)[]> = {
     },
     {
       "fr": {
-        "ask": "Alors tu vas adorer cette histoire : en Espagne, le Ratoncito Pérez (le petit rat Pérez) prend les dents des enfants, comme la petite souris ! Qu'est-ce que tu ressens : de la surprise ou de la joie ?",
+        "ask": "Alors tu vas adorer cette histoire : en Espagne, le Ratoncito Pérez (la petite souris Pérez) prend les dents des enfants, comme la petite souris ! Qu'est-ce que tu ressens : de la surprise ou de la joie ?",
         "hint": "Surprise ou joie ? 🐭 Réponds : « Siento sorpresa » (Je ressens de la surprise) ou simplement « ¡Sorpresa! ». Essaie !",
         "reveal": "Tu peux dire : « ¡Qué sorpresa! » (Quelle surprise !) 😄"
       },
@@ -4614,7 +4835,7 @@ const EXISTING_AIDES: Record<string, (StepAides | undefined)[]> = {
         },
         {
           "es": "el ratoncito",
-          "fr": "le petit rat, la petite souris"
+          "fr": "la petite souris (ratón = souris)"
         },
         {
           "es": "la sorpresa",

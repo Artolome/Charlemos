@@ -35,7 +35,7 @@ const PRINT_CSS = `
   table { border-collapse: collapse; width: 100%; margin: 4px 0; }
   th, td { border: 1px solid #bbb; padding: 4px 8px; text-align: left; font-size: 12px; vertical-align: top; }
   th { background: #faf0e6; }
-  .msg { margin: 3px 0; page-break-inside: avoid; }
+  .msg { margin: 3px 0; page-break-inside: avoid; white-space: pre-line; }
   .who { font-weight: 700; }
   .agent .who { color: #b45309; }
   .user .who { color: #5b21b6; }

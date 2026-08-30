@@ -197,6 +197,7 @@ export function Chat({ agentId }: { agentId: string }) {
       const idx = conv.messages.findIndex((m) => m.id === errorId);
       if (idx === -1 || streamingId) return;
       const history = conv.messages.slice(0, idx);
+      setSuggestions(null); // les idées affichées ne valent plus
       void runAssistant(history, conv.level);
     },
     [conv, streamingId, runAssistant],

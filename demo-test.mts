@@ -587,7 +587,7 @@ function play(agentId: string, userMsgs: string[]): string[] {
     ["13h pile", "fr"],
     ["aucune idee", "fr"],
     ["franchement aucune idee", "fr"],
-    ["svt", "fr"],
+    ["svt", null], //     matière ACCEPTÉE par Mateo, jamais refusée
     ["eps", "fr"],
     ["arts plastiques", "fr"],
     ["la geo", "fr"],
@@ -997,6 +997,173 @@ function play(agentId: string, userMsgs: string[]): string[] {
     "bien", //           réponse naturelle à ¿Cómo estás? → avance
   ]);
   check("lucía conv2 : « bien » accepté à ¿Cómo estás?", !r2[6].includes("Seguimos"), r2[6]);
+}
+
+// ---- 37) Correctifs de la 2e phase de test ----
+{
+  const { detectForeign, demoTranslation } = await import("./src/lib/demo");
+  // Langue : nouveaux contournements bouchés, faux positifs épargnés
+  const t: [string, "fr" | "en" | null][] = [
+    ["très bien", "fr"],
+    ["la porte 12", "fr"],
+    ["gate 12", "en"],
+    ["si volley", "fr"],
+    ["si 2 freres", "fr"],
+    ["jv a la playa", "fr"],
+    ["jvai a la playa", "fr"],
+    ["voyage a barcelona", "fr"],
+    ["y a un parque", "fr"],
+    ["svt", null],
+    ["voy al cine y a la playa", null], //  « y a » en milieu de phrase espagnol
+    ["tres gatos", null],
+  ];
+  const bad = t
+    .filter(([x, e]) => detectForeign(x) !== e)
+    .map(([x, e]) => `« ${x} » attendu=${e ?? "ok"} obtenu=${detectForeign(x) ?? "ok"}`);
+  check("phase 2 : table langue complémentaire", bad.length === 0, bad.join(" ; "));
+
+  // « svt » accepté par Mateo
+  const r0 = play("mateo", ["Emma", "svt"]);
+  check("phase 2 : « svt » accepté comme matière", r0[1].includes("bocadillo de tortilla"), r0[1]);
+
+  // Choix explicite « naranja, no azul » : pas une hésitation
+  const r1 = play("capitan", ["1", "Me llamo Léo y tengo 12 años", "naranja, no azul"]);
+  check("phase 2 : « naranja, no azul » accepté", r1[2].includes("[[etapa: 3/6]]"), r1[2]);
+
+  // Bonne réponse + question renvoyée ≠ copier-coller
+  const r2 = play("mateo", ["Léo", "Historia. ¿Y tú? ¿Cuál es tu asignatura favorita?"]);
+  check("phase 2 : réponse + question renvoyée acceptée", r2[1].includes("bocadillo"), r2[1]);
+
+  // Emoji seul = acquiescement, pas détresse
+  const r3 = play("capitan", ["1", "Me llamo Léo y tengo 12 años", "👍", "naranja"]);
+  check("phase 2 : « 👍 » → Seguimos (pas l'indice)", r3[2].includes("Seguimos"), r3[2]);
+  check("phase 2 : aucun essai brûlé par l'emoji", r3[3].includes("¡Correcto!"), r3[3]);
+
+  // Refus poli après un rapport : pas de relance forcée
+  const r4 = play("capitan", [
+    "1", "Me llamo Léo y tengo 12 años", "naranja", "Yo tengo 12 años",
+    "el Guernica", "Me gusta leer", "la mochila",
+    "no gracias", //  → pas de mission 2
+    "vale, otra misión", // → mission 2
+  ]);
+  check("phase 2 : « no gracias » ne relance pas", !r4[7].includes("[[etapa") && r4[7].includes("Cuando quieras"), r4[7]);
+  check("phase 2 : puis « otra misión » → mission 2", r4[8].includes("cuadro desaparecido"), r4[8]);
+  check("phase 2 : réponse d'attente traduite", !demoTranslation(r4[7]).includes("indisponible"), demoTranslation(r4[7]));
+
+  // Après la mission 2 choisie par numéro, la relance enchaîne sur la 3
+  const r5 = play("capitan", ["2", "Velázquez", "Barcelona", "gustan", "uvas",
+    "Desayuno tostadas", "una capa", "adelante"]);
+  check("phase 2 : relance après mission 2 → mission 3 (sorpresa)", r5[7].toLowerCase().includes("sorpresa"), r5[7]);
+
+  // Prénoms Léo et Rosa mémorisés, « mi nombre es Théo » aussi
+  const r6 = play("mateo", ["Me llamo Léo"]);
+  check("phase 2 : prénom Léo mémorisé", r6[0].includes("¡Genial, Léo!"), r6[0]);
+  const r7 = play("mateo", ["Soy Rosa"]);
+  check("phase 2 : prénom Rosa mémorisé", r7[0].includes("¡Genial, Rosa!"), r7[0]);
+  const r8 = play("mateo", ["Mi nombre es Théo"]);
+  check("phase 2 : « mi nombre es Théo » → Théo", r8[0].includes("¡Genial, Théo!"), r8[0]);
+
+  // Astuce non injectée sur une coordination correcte
+  const r9 = play("lucia", ["me gustan el futbol y los videojuegos"]);
+  check("phase 2 : « me gustan el X y los Y » sans fausse astuce", !r9[0].includes("[[astuce: Au singulier"), r9[0]);
+
+  // Marqueurs : la DERNIÈRE astuce est gardée (corrective > astuce du défi)
+  const { parseAssistantContent } = await import("./src/lib/markers");
+  const twoTips = "¡Muy bien!\n\nPregunta con [[astuce: astuce du défi]] integrada.\n[[astuce: astuce corrective]]";
+  check("phase 2 : dernière astuce gardée", parseAssistantContent(twoTips).tip === "astuce corrective", parseAssistantContent(twoTips).tip ?? "");
+  check("phase 2 : marqueur incomplet retiré hors streaming", !parseAssistantContent("Hola [[astuce: coup").text.includes("[["), "");
+}
+
+// ---- 38) Correctifs de la vague de confirmation ----
+{
+  const { detectForeign } = await import("./src/lib/demo");
+  const t: [string, "fr" | "en" | null][] = [
+    ["des céréales", "fr"],
+    ["les céréales", "fr"],
+    ["no siblings", "en"],
+    ["no sports", "en"],
+  ];
+  const bad = t
+    .filter(([x, e]) => detectForeign(x) !== e)
+    .map(([x, e]) => `« ${x} » attendu=${e ?? "ok"} obtenu=${detectForeign(x) ?? "ok"}`);
+  check("confirmation : céréales et pluriels anglais", bad.length === 0, bad.join(" ; "));
+
+  // « no idea » = détresse (indice), pas un « non »
+  const r0 = play("valeria", ["no idea"]);
+  check("confirmation : « no idea » → indice", r0[0].includes("Sí o no"), r0[0]);
+
+  // Choix explicite avec négation à distance : pas une hésitation
+  const r1 = play("lucia", ["me gusta la musica", "escucho rap",
+    "No me gustan las series, prefiero los videojuegos"]);
+  check("confirmation : « No me gustan las series, prefiero los videojuegos » accepté", r1[2].includes("Kiwi"), r1[2]);
+
+  // Bonne réponse + question renvoyée avec les options : pas une hésitation
+  const r2 = play("diego", ["sí", "Me parece bonito. ¿Y a ti, te parece bonito o extraño?"]);
+  check("confirmation : réponse + question aux options renvoyée acceptée", r2[1].includes("58 versiones"), r2[1]);
+
+  // Collage d'un défi SANS point d'interrogation : écho, pas 2 points
+  const r3 = play("chispa", ["reto", "sí", "soy", "estoy", "está",
+    "otro reto", "sí", "gusta", "gustan", "gusta",
+    "otro", "sí", "son las tres",
+    "Pregunta 2 de 3: ahora el reloj marca la 1:00. Completa: « ___ la una ». ¡Ojo, hay una trampa (un piège) célebre! 😉"]);
+  check("confirmation : collage d'un défi sans « ? » → écho", r3[13].includes("MI pregunta"), r3[13]);
+
+  // « ¡Gracias, capitán! ¡Otra misión, por favor! » relance bien
+  const r4 = play("capitan", ["1", "Me llamo Léo y tengo 12 años", "naranja", "Yo tengo 12 años",
+    "el Guernica", "Me gusta leer", "la mochila",
+    "¡Gracias, capitán! ¡Otra misión, por favor!"]);
+  check("confirmation : remerciement + relance explicite → mission 2", r4[7].includes("cuadro desaparecido"), r4[7]);
+
+  // Refus au tout premier contact : pas de fausse « excellente élection »
+  const r5 = play("capitan", ["no gracias", "vale, la 1"]);
+  check("confirmation : « no gracias » au 1er contact → attente", r5[0].includes("Cuando quieras"), r5[0]);
+  check("confirmation : puis « vale, la 1 » → mission 1", r5[1].includes("[[etapa: 1/6]]"), r5[1]);
+
+  // Réaction : négation à distance non prise pour un oui
+  const r6 = play("mateo", ["Léo", "historia", "una manzana", "a las 12", "tengo un perro",
+    "hola otra vez", "No juego al fútbol"]);
+  check("confirmation : « No juego al fútbol » sans réaction ⚽ enthousiaste", !r6[6].includes("Tape-m'en cinq") && !r6[6].includes("¡Como moi"), r6[6]);
+}
+
+// ---- 39) Correctifs de la 3e vague ----
+{
+  const { detectForeign } = await import("./src/lib/demo");
+  const t: [string, "fr" | "en" | null][] = [
+    ["chocolate milk", "en"],
+    ["on reste a la casa", "fr"],
+    ["on va a la playa", "fr"],
+    ["tu es sûr ?", "fr"],
+    ["avec mes amigos", "fr"],
+    ["churros évidemment", "fr"],
+    ["un mes", null], //          « mes » espagnol (le mois) intact
+    ["tú es de México", null], //  faute d'apprenant tolérée
+  ];
+  const bad = t
+    .filter(([x, e]) => detectForeign(x) !== e)
+    .map(([x, e]) => `« ${x} » attendu=${e ?? "ok"} obtenu=${detectForeign(x) ?? "ok"}`);
+  check("vague 3 : table langue", bad.length === 0, bad.join(" ; "));
+
+  // Mission 3 taxi : « Guay » et « Fatal » acceptés (plus de boucle Seguimos)
+  const r0 = play("capitan", ["3", "churros", "las fallas", "doce", "me gustan las empanadas", "Guay"]);
+  check("vague 3 : « Guay » accepté au taxi", r0[5].includes("[[etapa: 6/6]]"), r0[5]);
+
+  // « quiero la misión tres » → mission 3
+  const r1 = play("capitan", ["quiero la misión tres"]);
+  check("vague 3 : numéro espagnol compris", r1[0].toLowerCase().includes("sorpresa"), r1[0]);
+
+  // « no quiero otra misión » après un rapport : refus respecté
+  const r2 = play("capitan", ["1", "Me llamo Léo y tengo 12 años", "naranja", "Yo tengo 12 años",
+    "el Guernica", "Me gusta leer", "la mochila", "no quiero otra misión"]);
+  check("vague 3 : « no quiero otra misión » → attente", r2[7].includes("Cuando quieras"), r2[7]);
+
+  // Opinion combinée chez Diego : pas une hésitation
+  const r3 = play("diego", ["sí", "Me parece bonito y un poco extraño"]);
+  check("vague 3 : « bonito y un poco extraño » accepté", r3[1].includes("58 versiones"), r3[1]);
+
+  // « Vale » accepté à la relance de Valeria conv 2
+  const r4 = play("valeria", ["no", "hay halloween", "sí, me gustan", "la pizza", "quiero visitar japon",
+    "hola otra vez", "¡Vale!"]);
+  check("vague 3 : « ¡Vale! » accepté chez Valeria conv 2", !r4[6].includes("Seguimos"), r4[6]);
 }
 
 // ---- 22) Documents imprimables ----

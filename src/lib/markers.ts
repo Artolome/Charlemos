@@ -57,8 +57,11 @@ export function parseAssistantContent(raw: string, streaming = false): ParsedMes
   let etapa: { n: number; total: number } | undefined;
   let informe: MissionInforme | undefined;
 
+  // En cas d'astuces multiples (ex. astuce corrective du mode démo ajoutée
+  // en fin de message + astuce intégrée au défi suivant), on garde la
+  // DERNIÈRE : c'est celle qui porte sur la réponse de l'élève.
   let text = raw.replace(TIP_RE, (_m, captured: string) => {
-    if (!tip) tip = captured.trim();
+    tip = captured.trim();
     return "";
   });
 
@@ -73,9 +76,11 @@ export function parseAssistantContent(raw: string, streaming = false): ParsedMes
     text = text.replace(INFORME_RE, "");
   }
 
-  if (streaming) {
-    text = text.replace(PARTIAL_RE, "");
-  }
+  // Un « [[... » jamais fermé en fin de texte n'est jamais un contenu
+  // légitime : on le retire aussi hors streaming (cas du bouton Stop
+  // cliqué au milieu d'un marqueur, le fragment est ensuite persisté).
+  void streaming;
+  text = text.replace(PARTIAL_RE, "");
 
   // Nettoie les lignes vides laissées par les marqueurs
   text = text.replace(/\n{3,}/g, "\n\n").trim();
