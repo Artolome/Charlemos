@@ -6,10 +6,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
+  Check,
   ClipboardList,
   Copy,
+  Dices,
   Download,
   GraduationCap,
+  KeyRound,
   Loader2,
   Pencil,
   Plus,
@@ -88,6 +91,25 @@ function makeJoinCode(): string {
     code += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
   }
   return code;
+}
+
+// Mots de passe provisoires faciles à dicter à un élève : un mot espagnol
+// simple + 3 chiffres (ex. « gato482 »), toujours ≥ 6 caractères.
+const PASSWORD_WORDS = [
+  "gato", "perro", "luna", "sol", "flor", "casa", "agua", "libro", "playa",
+  "fiesta", "amigo", "verde", "rojo", "azul", "queso", "leche", "mesa", "pan",
+  "coche", "tren", "mar", "isla", "nube", "pez", "oso", "uva", "pato", "feliz",
+];
+// Pas de 0 ni de 1 : indistinguables de o/l à l'écrit (même règle que CODE_ALPHABET)
+const PASSWORD_DIGITS = "23456789";
+
+function makeStudentPassword(): string {
+  const word = PASSWORD_WORDS[Math.floor(Math.random() * PASSWORD_WORDS.length)];
+  const digits = Array.from(
+    { length: 3 },
+    () => PASSWORD_DIGITS[Math.floor(Math.random() * PASSWORD_DIGITS.length)],
+  ).join("");
+  return `${word}${digits}`;
 }
 
 export function TeacherView() {
@@ -342,6 +364,7 @@ export function TeacherView() {
         key={selected.id}
         student={selected}
         className={klass.name}
+        joinCode={klass.join_code}
         progress={progressRows.get(selected.id)}
         reports={reports.filter((r) => r.user_id === selected.id)}
         evaluation={evals.get(selected.id)}
@@ -573,6 +596,7 @@ export function TeacherView() {
 function StudentDetail({
   student,
   className,
+  joinCode,
   progress,
   reports,
   evaluation,
@@ -581,6 +605,7 @@ function StudentDetail({
 }: {
   student: StudentRow;
   className: string;
+  joinCode: string;
   progress?: ProgressRow;
   reports: ReportRow[];
   evaluation?: EvalRow;
@@ -592,6 +617,53 @@ function StudentDetail({
   const [openAgent, setOpenAgent] = useState<string | null>(null);
   const [evalRow, setEvalRow] = useState<EvalRow | null>(evaluation ?? null);
   const [evaluating, setEvaluating] = useState(false);
+
+  // Réinitialisation du mot de passe : panneau fermé / saisie / mot de passe
+  // appliqué (affiché une seule fois pour le dicter à l'élève)
+  const [pwPanel, setPwPanel] = useState<"closed" | "edit" | "done">("closed");
+  const [newPassword, setNewPassword] = useState("");
+  const [resetting, setResetting] = useState(false);
+  const [pwCopied, setPwCopied] = useState(false);
+
+  const openPasswordPanel = () => {
+    setNewPassword(makeStudentPassword());
+    setPwCopied(false);
+    setPwPanel("edit");
+  };
+
+  const resetPassword = async () => {
+    const pw = newPassword.trim();
+    if (resetting || pw.length < 6) return;
+    setResetting(true);
+    const r = await callFunction({
+      op: "reset_student_password",
+      studentId: student.id,
+      password: pw,
+    });
+    setResetting(false);
+    if (!r.ok) {
+      pushToast({ emoji: "⚠️", title: r.error ?? "Réinitialisation impossible." });
+      return;
+    }
+    setNewPassword(pw);
+    setPwPanel("done");
+    // Le mot de passe figure aussi dans le toast : il reste visible même si
+    // la fiche a été quittée pendant l'attente du serveur.
+    pushToast({
+      emoji: "🔑",
+      title: `Mot de passe de ${student.display_name} réinitialisé.`,
+      sub: `Nouveau mot de passe : ${pw}`,
+    });
+  };
+
+  const copyPassword = async () => {
+    try {
+      await navigator.clipboard.writeText(newPassword);
+      setPwCopied(true);
+    } catch {
+      pushToast({ emoji: "⚠️", title: "Copie impossible ici : note le mot de passe affiché." });
+    }
+  };
 
   const runEvaluation = async () => {
     if (evaluating) return;
@@ -636,11 +708,20 @@ function StudentDetail({
         <div className="flex flex-wrap items-center gap-2">
           <button
             onClick={onBack}
-            className="flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-bold text-slate-600 hover:bg-orange-100 dark:text-slate-300 dark:hover:bg-slate-800"
+            disabled={resetting}
+            className="flex items-center gap-1.5 rounded-xl px-2 py-1.5 text-sm font-bold text-slate-600 hover:bg-orange-100 disabled:opacity-50 dark:text-slate-300 dark:hover:bg-slate-800"
           >
             <ArrowLeft className="h-4 w-4" /> Retour à la classe
           </button>
           <div className="flex-1" />
+          <button
+            onClick={() => (pwPanel === "closed" ? openPasswordPanel() : setPwPanel("closed"))}
+            disabled={resetting}
+            className="flex items-center gap-1.5 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-orange-200 hover:bg-orange-50 disabled:opacity-50 dark:bg-slate-900 dark:text-slate-300 dark:ring-slate-700"
+            title="Donner un nouveau mot de passe à cet élève (mot de passe oublié)"
+          >
+            <KeyRound className="h-3.5 w-3.5" /> Mot de passe
+          </button>
           <button
             onClick={() =>
               openPrintWindow(
@@ -669,6 +750,92 @@ function StudentDetail({
           {progress?.missions_completed ?? 0} missions · 📚{" "}
           {Array.isArray(progress?.vocab) ? progress.vocab.length : 0} mots au carnet
         </p>
+
+        {/* Réinitialisation du mot de passe (mot de passe oublié) */}
+        {pwPanel === "edit" && (
+          <div className="mt-4 rounded-2xl bg-amber-50 p-4 ring-1 ring-amber-200 dark:bg-amber-950/40 dark:ring-amber-900">
+            <p className="flex items-center gap-2 text-sm font-extrabold text-amber-900 dark:text-amber-200">
+              <KeyRound className="h-4 w-4" /> Nouveau mot de passe pour {student.display_name}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                autoFocus
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") void resetPassword();
+                  if (e.key === "Escape" && !resetting) setPwPanel("closed");
+                }}
+                maxLength={72}
+                autoComplete="off"
+                spellCheck={false}
+                aria-label={`Nouveau mot de passe pour ${student.display_name}`}
+                className="w-44 rounded-xl border border-amber-300 bg-white px-3 py-2 font-mono text-base font-bold tracking-wide text-slate-800 focus:outline-none focus:ring-2 focus:ring-amber-300 dark:border-amber-800 dark:bg-slate-950 dark:text-slate-100"
+              />
+              <button
+                onClick={() => setNewPassword(makeStudentPassword())}
+                className="flex items-center gap-1 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-amber-200 hover:bg-amber-100 dark:bg-slate-900 dark:text-slate-300 dark:ring-amber-900"
+                title="Proposer un autre mot de passe"
+              >
+                <Dices className="h-3.5 w-3.5" /> Autre
+              </button>
+              <button
+                onClick={() => void resetPassword()}
+                disabled={resetting || newPassword.trim().length < 6}
+                className="flex items-center gap-1.5 rounded-xl bg-amber-600 px-3 py-2 text-xs font-bold text-white hover:bg-amber-700 disabled:opacity-50"
+              >
+                {resetting ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Check className="h-3.5 w-3.5" />
+                )}
+                Appliquer
+              </button>
+              <button
+                onClick={() => setPwPanel("closed")}
+                disabled={resetting}
+                className="rounded-xl px-3 py-2 text-xs font-bold text-slate-500 hover:bg-amber-100 disabled:opacity-50 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
+                Annuler
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-amber-800/90 dark:text-amber-200/80">
+              Au moins 6 caractères. L'ancien mot de passe ne fonctionnera plus : l'élève se
+              reconnectera avec son prénom écrit <b>{student.display_name}</b>, le code{" "}
+              <b>{joinCode}</b> et ce nouveau mot de passe.
+            </p>
+          </div>
+        )}
+        {pwPanel === "done" && (
+          <div className="mt-4 rounded-2xl bg-emerald-50 p-4 ring-1 ring-emerald-200 dark:bg-emerald-950/40 dark:ring-emerald-900">
+            <p className="text-sm font-extrabold text-emerald-800 dark:text-emerald-200">
+              ✅ Nouveau mot de passe de {student.display_name} :
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <span className="break-all rounded-xl bg-white px-4 py-1.5 font-mono text-xl font-extrabold tracking-wide text-emerald-700 shadow-sm dark:bg-slate-900 dark:text-emerald-300">
+                {newPassword}
+              </span>
+              <button
+                onClick={() => void copyPassword()}
+                className="flex items-center gap-1 rounded-xl bg-white px-3 py-2 text-xs font-bold text-slate-600 ring-1 ring-emerald-200 hover:bg-emerald-100 dark:bg-slate-900 dark:text-slate-300 dark:ring-emerald-900"
+                title="Copier le mot de passe"
+              >
+                {pwCopied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                {pwCopied ? "Copié" : "Copier"}
+              </button>
+              <button
+                onClick={() => setPwPanel("closed")}
+                className="rounded-xl px-3 py-2 text-xs font-bold text-slate-500 hover:bg-emerald-100 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
+                Fermer
+              </button>
+            </div>
+            <p className="mt-2 text-xs text-emerald-800/90 dark:text-emerald-200/80">
+              Note-le pour l'élève : il ne sera plus affiché ensuite. Connexion : prénom{" "}
+              <b>{student.display_name}</b> · code <b>{joinCode}</b> · ce mot de passe.
+            </p>
+          </div>
+        )}
 
         {/* Bilan de compétences (CECRL / cycle 4) */}
         <div className="mt-6 flex flex-wrap items-center gap-3">

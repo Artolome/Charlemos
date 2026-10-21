@@ -79,6 +79,10 @@ empêche n'importe qui de se déclarer professeur.
 4. Les élèves : onglet **Élève** → « Crée ton compte » → prénom + code + mot de passe.
    (Deux élèves avec le même prénom dans la classe : le second ajoute une initiale,
    ex. « Léa B ».)
+5. **Mot de passe oublié par un élève** : **Ma classe** → clique sur l'élève →
+   bouton **Mot de passe** → un nouveau mot de passe est proposé (modifiable) →
+   **Appliquer** → dicte-le à l'élève. Il se reconnecte avec son prénom (écrit
+   exactement comme à l'inscription), le code de classe et ce nouveau mot de passe.
 
 ---
 

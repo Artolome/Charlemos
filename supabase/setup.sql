@@ -143,3 +143,27 @@ create policy "eleve lit ses evaluations" on public.evaluations
   for select using (user_id = auth.uid());
 create policy "prof lit les evaluations" on public.evaluations
   for select using (public.is_my_student(user_id));
+
+-- ------------------------------------------------------------
+-- Droits d'accès explicites à l'API (Data API)
+-- Depuis le 30 octobre 2026, Supabase n'accorde plus automatiquement
+-- ces droits aux nouvelles tables du schéma public : sans GRANT, l'API
+-- renvoie « permission denied ». Les règles RLS ci-dessus restent le
+-- vrai filtre (chacun ne voit que ses lignes) ; ces GRANT ouvrent
+-- seulement la porte aux rôles concernés.
+-- ------------------------------------------------------------
+grant usage on schema public to anon, authenticated, service_role;
+
+-- Comptes connectés (élèves et professeurs) : accès filtré par les RLS.
+-- Le rôle anon n'a besoin d'aucune table : avant connexion, tout passe
+-- par la fonction Edge (inscription) ou par le schéma auth.
+grant select, insert, update, delete on public.classes to authenticated;
+grant select, insert, update on public.profiles to authenticated;
+grant select, insert, update, delete on public.progress to authenticated;
+grant select, insert, update, delete on public.conversations to authenticated;
+grant select, insert, update, delete on public.mission_reports to authenticated;
+grant select on public.evaluations to authenticated;
+
+-- Serveur (fonction Edge avec la clé service) : accès complet, y compris
+-- usage_log qui lui est réservée.
+grant all on all tables in schema public to service_role;

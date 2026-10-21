@@ -1,13 +1,17 @@
 // Fonction Edge « charlemos-ia » : proxy IA de la classe + inscription élève.
 // - crée les comptes élèves (déjà confirmés) après vérification du code de classe ;
 // - vérifie que les appels IA viennent d'un compte connecté ;
+// - actions du professeur : suppression d'une classe, réinitialisation du mot
+//   de passe d'un élève, bilan de compétences ;
 // - reconstruit les prompts pédagogiques côté serveur (non modifiables) ;
 // - applique une limite de débit par compte ;
 // - appelle l'API Anthropic avec la clé secrète ANTHROPIC_API_KEY
 //   (à définir dans : Edge Functions → Secrets) et renvoie le flux.
 //
-// Déploiement : Supabase → Edge Functions → charlemos-ia → éditeur →
-// coller index.ts et prompts.ts → Deploy.
+// Déploiement (depuis le dossier du projet, CLI déjà authentifiée) :
+//   npx supabase functions deploy charlemos-ia --project-ref dsvtpqouivpjwcuvvozf
+// (envoie index.ts + prompts.ts ; éviter l'éditeur du dashboard, qui ne garde
+// qu'un seul fichier).
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import {
@@ -180,13 +184,6 @@ Deno.serve(async (req: Request) => {
     return json(200, { ok: true });
   }
 
-  if (!apiKey) {
-    return json(500, {
-      error:
-        "Le serveur n'a pas de clé API : le professeur doit ajouter le secret ANTHROPIC_API_KEY (Edge Functions → Secrets).",
-    });
-  }
-
   // 1. Authentification du compte
   const authHeader = req.headers.get("authorization") ?? "";
   const userClient = createClient(supabaseUrl, anonKey, {
@@ -217,13 +214,24 @@ Deno.serve(async (req: Request) => {
   }
   await admin.from("usage_log").insert({ user_id: user.id });
 
-  // Déclaré ici car utilisé par evaluate_student ET par les appels IA plus bas
-  const anthropicHeaders = (withFallbacks: boolean): Record<string, string> => ({
-    "content-type": "application/json",
-    "x-api-key": apiKey,
-    "anthropic-version": "2023-06-01",
-    ...(withFallbacks ? { "anthropic-beta": "server-side-fallback-2026-07-01" } : {}),
-  });
+  /** Profil d'un élève s'il appartient à une classe du professeur connecté */
+  const studentOfTeacher = async (studentId: string) => {
+    if (!studentId) return null;
+    const { data: stud } = await admin
+      .from("profiles")
+      .select("id, display_name, class_id")
+      .eq("id", studentId)
+      .eq("role", "student")
+      .maybeSingle();
+    if (!stud?.class_id) return null;
+    const { data: ownCls } = await admin
+      .from("classes")
+      .select("id")
+      .eq("id", stud.class_id)
+      .eq("teacher_id", user.id)
+      .maybeSingle();
+    return ownCls ? stud : null;
+  };
 
   // 3a. Suppression d'une classe par son professeur : retire la classe ET
   //     les comptes de ses élèves (leurs données suivent, par cascade).
@@ -253,27 +261,54 @@ Deno.serve(async (req: Request) => {
     return json(200, { ok: true, removed });
   }
 
-  // 3b. Bilan de compétences d'un élève (CECRL / cycle 4), généré par l'IA
+  // 3b. Réinitialisation du mot de passe d'un élève par son professeur.
+  //     Les élèves n'ont pas d'e-mail : aucun lien « mot de passe oublié »
+  //     n'est possible, c'est le professeur qui fixe un nouveau mot de passe.
+  if (op === "reset_student_password") {
+    if (profile.role !== "teacher") {
+      return json(403, { error: "Action réservée au professeur." });
+    }
+    const password = typeof body.password === "string" ? body.password : "";
+    if (password.length < 6) {
+      return json(400, { error: "Le mot de passe doit faire au moins 6 caractères." });
+    }
+    if (password.length > 72) {
+      return json(400, { error: "Le mot de passe est trop long (72 caractères max)." });
+    }
+    const stud = await studentOfTeacher(String(body.studentId ?? ""));
+    if (!stud) return json(404, { error: "Élève introuvable dans tes classes." });
+    const { error } = await admin.auth.admin.updateUserById(stud.id, { password });
+    if (error) {
+      console.error("reset_student_password", error.message);
+      return json(500, { error: `Réinitialisation impossible : ${error.message}` });
+    }
+    return json(200, { ok: true });
+  }
+
+  if (!apiKey) {
+    return json(500, {
+      error:
+        "Le serveur n'a pas de clé API : le professeur doit ajouter le secret ANTHROPIC_API_KEY (Edge Functions → Secrets).",
+    });
+  }
+
+  // Déclaré ici car utilisé par evaluate_student ET par les appels IA plus bas
+  const anthropicHeaders = (withFallbacks: boolean): Record<string, string> => ({
+    "content-type": "application/json",
+    "x-api-key": apiKey,
+    "anthropic-version": "2023-06-01",
+    ...(withFallbacks ? { "anthropic-beta": "server-side-fallback-2026-07-01" } : {}),
+  });
+
+  // 3c. Bilan de compétences d'un élève (CECRL / cycle 4), généré par l'IA
   //     à la demande du professeur, à partir des écrits réels de l'élève.
   if (op === "evaluate_student") {
     if (profile.role !== "teacher") {
       return json(403, { error: "Action réservée au professeur." });
     }
     const studentId = String(body.studentId ?? "");
-    const { data: stud } = await admin
-      .from("profiles")
-      .select("id, display_name, class_id")
-      .eq("id", studentId)
-      .eq("role", "student")
-      .maybeSingle();
-    if (!stud?.class_id) return json(404, { error: "Élève introuvable." });
-    const { data: ownCls } = await admin
-      .from("classes")
-      .select("id")
-      .eq("id", stud.class_id)
-      .eq("teacher_id", user.id)
-      .maybeSingle();
-    if (!ownCls) return json(403, { error: "Cet élève n'est pas dans une de tes classes." });
+    const stud = await studentOfTeacher(studentId);
+    if (!stud) return json(404, { error: "Élève introuvable dans tes classes." });
 
     const [{ data: convs }, { data: reps }, { data: prog }] = await Promise.all([
       admin
@@ -382,7 +417,7 @@ Deno.serve(async (req: Request) => {
     return json(200, { ok: true, evaluation });
   }
 
-  // 3c. Validation de la demande IA
+  // 3d. Validation de la demande IA
   const model = ALLOWED_MODELS.includes(String(body.model))
     ? String(body.model)
     : ALLOWED_MODELS[0];
